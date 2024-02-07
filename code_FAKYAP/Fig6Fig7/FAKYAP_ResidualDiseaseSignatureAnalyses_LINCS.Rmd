@@ -1,0 +1,1034 @@
+---
+title: "lincs_cleaned"
+author: "Lauren Cech"
+date: "2/2/2022"
+output: html_document
+---
+
+#lincs general workflow
+```{r}
+#see also: Le, Andreoletti, Oskotsky et al., Scientific Reports 11, 12310 (2021) https://www.nature.com/articles/s41598-021-91625-1
+
+#General Steps:
+#1. Compute Gene Expression Signature for your tumor-cell line of interest
+#2. Create /source disease gene expression signatures, validate
+#3. Predict drugs using CMAP and LINCS
+#4. Reversal, examine correlation bw disease gene sig and drug-gene signatures
+#5. Visualize results
+```
+#Step One: Compute Gene Expression Signature for tumor-cell line of interest
+##Lung Cancer (Residual disease clinical specimens and persister cell lines)
+```{r}
+#completed in "FAKYAP_SingleCellDataGeneSetAnalyses.Rmd or follow lincsprep.Rmd
+```
+#Step Two: Validated Gene Expression Signature for Lung Cancer RD
+```{r}
+#completed in "FAKYAP_SingleCellDataGeneSetAnalyses.Rmd"
+#disease signature1 = RD DEGs (DEGS for RD in single cell data)
+#disease signature2 = PR DEGs (DEGs for all cell line persisters)
+#disease signature3 = unique(signature1,signature2) (we used this #approx. 83 genes)
+#format as needed for input for corresponding analyses
+sig_subset = subset(signature3, abs(log2FoldChange) != Inf)
+sig_subset = subset(sig_subset$padj < 1E-10 & abs(sig_subset$log2FoldChange) > 2) #choose only high fold change and minimal p
+#follow lincsprep.Rmd
+```
+#Step Three: Predict drugs using CMAP and LINCS
+##CMAP exploratory, LINCS most important for comparison
+```{r}
+#follow predict_drugs_lincs.R for desired disease signature:
+#compute random scores for significance testing
+#compute connectivitymap scores
+#follow lincsprep.Rmd
+```
+#Step Four: Reversal
+##Determine and refine correlation/concordance for signatures
+```{r}
+#for final validation, execute same analysis on RD clinical only signature, cell line persister only signature, and RD+cell line persister signature in parallel, using iLINCS (Pilarczyk et al., 2020). Choose only predictions from all analyses that leverage conguent top reversal genes/scores. Use same terminology as iLINCS workflow output for ease of downstream integration/annotation.
+#output filter steps follow as in supp.table.8_XXX, with supp.table.8_TOP50 as best results
+```
+#Step Five: Visualize Results
+##plots for the best persister drug reversal predictions
+```{r}
+library("AnnotationDbi")
+library("abind")
+library("beeswarm")
+library("Biobase")
+library("biomaRt")
+library("broom")
+library("colorspace")
+library("cowplot")
+library("dendsort")
+library("DESeq2")
+library("doParallel")
+library("dplyr")
+library("foreach")
+library("forestplot")
+library("genefilter")
+library("ggbeeswarm")
+library("ggdendro")
+library("ggplot2")
+library("ggtern")
+library("glmnet")
+library("grid")
+library("gridExtra")
+library("gtable")
+library("hexbin")
+library("IHW")
+library("ipflasso")
+library("knitr")
+library("limma")
+library("magrittr")
+library("maxstat")
+library("nat")
+library("org.Hs.eg.db")
+library("BloodCancerMultiOmics2017")
+library("pheatmap")
+library("piano")
+library("readxl")
+library("RColorBrewer")
+library("reshape2")
+library("Rtsne")
+library("scales")
+library("SummarizedExperiment")
+library("survival")
+library("tibble")
+library("tidyr")
+library("xtable")
+library("ggpubr")
+
+#loosely followed this workflow
+#https://www.bioconductor.org/packages/release/data/experiment/vignettes/BloodCancerMultiOmics2017/inst/doc/BloodCancerMultiOmics2017.html
+#All sequencing data avail at PRJNA766057 and PRJNA591860 and GEO database under accession code GSE70138.
+```
+
+#load data
+```{r}
+bestRD_LINCS <- read_excel("~/PATH/TO/SUPP/TABLE/EIGHT/")
+LINCS_2 <- bestRD_LINCS[,1:9]
+```
+
+# Data processing
+```{r}
+table(LINCS_2$Concentration)
+Concentration <- LINCS_2 %>%
+  group_by(Concentration) %>%
+  summarise(counts = n())
+Concentration
+# Create the bar plot. Use theme_pubclean() [in ggpubr]
+ggplot(Concentration, aes(x = Concentration, y = counts)) +
+  geom_bar(fill = "#0073C2FF", stat = "identity") +
+  geom_text(aes(label = Concentration), vjust = -0.4) + 
+  theme_pubclean()
+
+#by counts directly
+ggplot(LINCS_2, aes(x=factor(Concentration)))+
+  geom_bar(stat="count", width=0.7, fill="steelblue")+
+  theme_minimal()
+
+
+#dplyr
+LINCS_2$ConcentrationUse <- as.numeric(gsub("uM", "", LINCS_2$Concentration))
+LINCS_2$ConcentrationUse = as.numeric(as.character(LINCS_2$ConcentrationUse), fixed = TRUE)
+LINCS_2 %>%
+  dplyr::count(ConcentrationUse) %>% 
+  dplyr::mutate(percConc = n/sum(n) * 100) %>% 
+  ggplot(aes(x = factor(ConcentrationUse), y = n)) + 
+  geom_col() + 
+  #geom_text(aes(label = percConc), vjust = -0.4)+
+  labs(x = "Concentrations (uM)", y = "Counts", title = "Occurence of Concentrations")
+```
+
+pdf(file = "Concentration_Counts.pdf")
+LINCS_2 %>%
+  dplyr::count(ConcentrationUse) %>% 
+  dplyr::mutate(percConc = n/sum(n) * 100) %>% 
+  ggplot(aes(x = factor(ConcentrationUse), y = n)) + 
+  geom_col() + 
+  #geom_text(aes(label = percConc), vjust = -0.4)+
+  labs(x = "Concentrations (uM)", y = "Counts", title = "Occurence of Concentrations")
+dev.off()
+
+```{r}
+LINCS_2 %>%
+  dplyr::count(CellLine) %>% 
+  #dplyr::mutate(percConc = n/sum(n) * 100) %>% 
+  ggplot(aes(x = factor(CellLine), y = n)) + 
+  geom_col() + 
+  #geom_text(aes(label = percConc), vjust = -0.4)+
+  labs(x = "Concentrations (uM)", y = "Counts", title = "Occurence of Concentrations")
+```
+
+
+
+
+# Cell Line
+```{r}
+
+LINCS_2.1 <- LINCS_2 %>%
+  #filter(!is.na(Gender) & Gender != "NULL") %>%
+  group_by(CellLine) %>%
+  tally(sort = T) %>%
+  ungroup() %>%
+  arrange(-desc(n))
+
+LINCS_2.1$CellLine <- factor(LINCS_2.1$CellLine, LINCS_2.1$CellLine)
+
+pdf(file = "CellLine_Counts.pdf")
+LINCS_2.1 %>%
+  ggplot(aes(x = CellLine, y = n)) + 
+  geom_col(width = 0.6, position = position_dodge(1)) + 
+  theme(axis.text.x  = element_text(angle=45, hjust = 1, size = 4.2)) +
+  labs(x = "Cell Line", y = "Counts", title = "Occurence of Cell Line")
+dev.off()
+
+```
+  
+pdf(file = "CellLine_Counts.pdf")
+LINCS_2.1 %>%
+  ggplot(aes(x = CellLine, y = n)) + 
+  geom_col(width = 0.6, position = position_dodge(1)) + 
+  theme(axis.text.x  = element_text(angle=45, hjust = 1, size = 4.2)) +
+  labs(x = "Cell Line", y = "Counts", title = "Occurence of Cell Line")
+dev.off()
+
+# Cell Tissue Type
+```{r}
+head(CellLineTable)
+
+```
+
+
+# Concordance
+```{r}
+pdf(file = "Concordance_Distribution.pdf")
+LINCS_2 %>%
+  ggplot(aes(x = Concordance)) + 
+  geom_histogram(bins = 50) + 
+  labs(x = "Concordance (filtered < -0.2)", y = "Counts", title = "Distribution of Concordance")
+dev.off()
+```
+pdf(file = "Concordance_Distribution.pdf")
+LINCS_2 %>%
+  ggplot(aes(x = Concordance)) + 
+  geom_histogram(bins = 50) + 
+  labs(x = "Concordance (filtered < -0.2)", y = "Counts", title = "Distribution of Concordance (bins = 50)")
+dev.off()
+
+# p val
+```{r}
+pdf(file = "Pval_Distribution.pdf")
+LINCS_2 %>%
+  ggplot(aes(x = pValue)) + 
+  geom_histogram(bins = 50) + 
+  labs(x = "P-value (filtered < -0.05)", y = "Counts", title = "Distribution of P-values (bins = 50)")
+dev.off()
+```
+pdf(file = "Pval_Distribution.pdf")
+LINCS_2 %>%
+  ggplot(aes(x = pValue)) + 
+  geom_histogram(bins = 50) + 
+  labs(x = "P-value (filtered < -0.05)", y = "Counts", title = "Distribution of P-values (bins = 50)")
+dev.off()
+
+# perturbagen target
+
+```{r}
+pdf(file = "Pval_Distribution.pdf")
+LINCS_2 %>%
+  ggplot(aes(x = pValue)) + 
+  geom_histogram(bins = 50) + 
+  labs(x = "P-value (filtered < -0.05)", y = "Counts", title = "Distribution of P-values (bins = 50)")
+dev.off()
+```
+data_practice <- as.matrix(mtcars)
+```{r}
+data_use <- LINCS_2[,c("SignatureId","Perturbagen", "Concordance", "pValue")] %>% as.matrix()
+data_use$rows <- paste(data_use$Perturbagen,"__", data_use$SignatureId)
+data_use %>% as.matrix()
+
+heatmap(data_use)
+head(data_use)
+rownames(data_use)<- data_use$Perturbagen  
+data_use$Perturbagen = NULL
+c <- head(data_use)
+View(c)
+
+
+head(LINCS_2)
+length(unique(LINCS_2$Perturbagen))#1667 unique compounds
+
+ggplot(LINCS_2, aes(x=Perturbagen, y= -Concordance)) +
+        geom_jitter()
+```
+
+```{r}
+LINCS_filter <- LINCS_2[!grepl("BRD", LINCS_2$Perturbagen),]
+#LINCS_filter <- LINCS_2[!grepl("BRD", LINCS_2$Perturbagen) & LINCS_2$GeneTargets != "unknown",]
+
+dim(LINCS_filter) #2704   x  9
+range(LINCS_filter$Concordance) #-0.5449881 -0.2158999
+length(unique(LINCS_filter$Perturbagen))#1353 unique compounds
+
+
+data_practice <- LINCS_filter[1:50,]
+head(data_practice)
+library(viridis)
+ggplot(data = data_practice, aes(x=GeneTargets,y=SignatureId)) + geom_tile(aes(fill=Concordance)) + scale_fill_viridis()
+View(LINCS_filter)
+
+#change to single targets for simplicity, adding additional targets to a new column
+library(stringr)
+library(tidyr)
+LINCS_filter.1 <- LINCS_filter 
+LINCS_filter.1 %<>%
+  mutate(target2 = GeneTargets) %>%
+  separate(target2, c("Primary", "Secondary"), "\\|") #need to escape the treatment as non character value using \\
+#https://stackoverflow.com/questions/27721008/how-do-i-deal-with-special-characters-like-in-my-regex
+  #str_split_fixed(LINCS_filter.1$target2, "|", 2)
+View(LINCS_filter.1)
+
+data_practice <- LINCS_filter.1[1:50,]
+ggplot(data = data_practice, aes(x=Primary,y=SignatureId)) + geom_tile(aes(fill=Concordance)) + scale_fill_viridis() + theme(axis.text.x  = element_text(angle=45, hjust = 1, size = 8))
+dim(LINCS_filter.1) #2704   11
+
+
+LINCS_filter.2 <- LINCS_filter.1 %>%
+  group_by(Primary) %>%
+  tally(sort = T) %>%
+  ungroup() %>%
+  arrange(-desc(n))
+LINCS_filter.2$Primary <- factor(LINCS_filter.2$Primary, LINCS_filter.2$Primary)
+View(LINCS_filter.2)
+LINCS_filter.3 <- LINCS_filter.2 %>%
+  filter(n > 5)
+
+
+LINCS_filter.3 %>%
+  ggplot(aes(x = Primary, y = n)) + 
+  geom_col(width = 0.5, position = position_dodge(width = 5.5)) + 
+  theme(axis.text.x  = element_text(angle=45, hjust = 1, size = 4.2)) +
+  scale_x_discrete(guide = guide_axis(n.dodge=1))+
+  labs(x = "Primary Target of Perturbagen", y = "Counts", title = "Occurence of Primary Target > 5x")
+dim(LINCS_filter.3) #79 x 2
+
+orderuse <- LINCS_filter.3$Primary
+```
+pdf(file = "PrimaryTarget_Counts.pdf")
+LINCS_filter.3 %>%
+  ggplot(aes(x = Primary, y = n)) + 
+  geom_col(width = 0.5, position = position_dodge(width = 5.5)) + 
+  theme(axis.text.x  = element_text(angle=45, hjust = 1, size = 4.2)) +
+  scale_x_discrete(guide = guide_axis(n.dodge=1))+
+  labs(x = "Primary Target of Perturbagen", y = "Counts", title = "Occurence of Primary Target > 5x")
+dev.off()
+
+# subset 1
+```{r}
+
+LINCS_filter.4 <- LINCS_filter.1[LINCS_filter.1$Primary %in% LINCS_filter.3$Primary,]
+dim(LINCS_filter.4)  #2243   11
+data_practice <- LINCS_filter.4[1:200,]
+ggplot(data = data_practice, aes(x=Primary,y=Perturbagen)) + geom_tile(aes(fill=Concordance)) + scale_fill_viridis() + theme(axis.text.x  = element_text(angle=45, hjust = 1, size = 8), axis.text.y = element_text(angle=45, hjust = 1, size = 2))
+ggplot(data = LINCS_filter.4, aes(x=Primary,y=SignatureId)) + geom_tile(aes(fill=Concordance)) + scale_fill_viridis() + theme(axis.text.x  = element_text(angle=45, hjust = 1, size = 7))
+```
+
+```{r}
+LINCS_filter.5 <- LINCS_filter.4
+LINCS_filter.5$Primary <- factor(LINCS_filter.5$Primary, levels = orderuse)
+data_practice <- LINCS_filter.5[1:200,]
+
+
+
+data_practice <- LINCS_filter.5 %>% 
+  as.data.frame() %>% 
+  arrange(desc(Concordance)) 
+#dim(data_practice) # 2243  x 11
+data_practice <- data_practice[c(1:10,2093:2243),]
+#View(data_practice)
+
+
+ 
+data_practice %>%
+  #dplyr::group_by(Perturbagen, Primary, Concordance) %>%
+  #dplyr::recode_factor(.Primary, levels())
+  ggplot(aes(x=Primary,y=factor(Perturbagen)))+
+  geom_tile(aes(fill=Concordance), size = 4) +
+  scale_fill_viridis(option = "E") +
+  theme(axis.text.x  = element_text(angle=45, hjust = 1, size = 6), axis.text.y = element_text(angle=45, hjust = 1, size = 2))
+
+
+
+LINCS_filter.6 <- LINCS_filter.1
+LINCS_filter.7 <- LINCS_filter.6 %>%
+   arrange(Perturbagen, desc(Concordance)) %>% 
+   group_by(Perturbagen) %>% 
+   slice(1L) 
+
+View(LINCS_filter.7)
+
+length(LINCS_filter.7$Perturbagen) #1353
+length(unique(LINCS_filter.7$Perturbagen)) #1353
+
+LINCS_filter.7 %>%
+  #dplyr::group_by(Perturbagen, Primary, Concordance) %>%
+  #dplyr::recode_factor(.Primary, levels())
+  ggplot(aes(x=Primary,y=factor(Perturbagen)))+
+  geom_tile(aes(fill=Concordance), size = 4) +
+  scale_fill_viridis(option = "D") +
+  theme(
+    plot.title = element_text(color="white",hjust=0,vjust=1, size=1),
+    plot.background = element_rect(fill="gray20"),
+    panel.background = element_rect(fill="gray20"),
+    panel.border = element_rect(fill=NA,color="gray20", size=0.5, linetype="solid"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(), 
+    axis.text = element_text(color="white", size=rel(1.5),angle=45, hjust = 1),
+    axis.text.y  = element_text(hjust=1,angle=45, size = 1),
+    legend.text = element_text(color="white", size=rel(1.3)),
+    legend.background = element_rect(fill="gray20"),
+    legend.position = "bottom",
+    legend.title=element_blank()
+  )
+
+
+data_practice <- LINCS_filter.7 %>% 
+  as.data.frame() %>% 
+  arrange(desc(Concordance)) 
+#dim(data_practice) # 2243  x 11
+data_practice <- data_practice[c(1:10,1153:1353),]
+data_practice %>%
+  #dplyr::group_by(Perturbagen, Primary, Concordance) %>%
+  #dplyr::recode_factor(.Primary, levels())
+  ggplot(aes(x=Primary,y=factor(Perturbagen)))+
+  geom_tile(aes(fill=Concordance), size = 4) +
+  scale_fill_viridis(option = "D") +
+  theme(
+    plot.title = element_text(color="white",hjust=0,vjust=1, size=1),
+    plot.background = element_rect(fill="gray20"),
+    panel.background = element_rect(fill="gray20"),
+    panel.border = element_rect(fill=NA,color="gray20", size=0.5, linetype="solid"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(), 
+    axis.text = element_text(color="white", size=4.5,angle=45, hjust = 1),
+    axis.text.y  = element_text(hjust=1,angle=45, size = 1),
+    legend.text = element_text(color="white", size=rel(1.3)),
+    legend.background = element_rect(fill="gray20"),
+    legend.position = "bottom",
+    legend.title=element_blank()
+  )
+```
+pdf("PrimaryTarget_Perturbagen_Concordance_Heatmap_all.pdf")
+LINCS_filter.5 %>%
+  #dplyr::group_by(Perturbagen, Primary, Concordance) %>%
+  #dplyr::recode_factor(.Primary, levels())
+  ggplot(aes(x=Primary,y=factor(Perturbagen)))+
+  geom_tile(aes(fill=Concordance), size = 4) +
+  scale_fill_viridis(option = "E") +
+  theme(axis.text.x  = element_text(angle=45, hjust = 1, size = 6), axis.text.y = element_text(angle=45, hjust = 1, size = 2))
+dev.off()
+
+pdf("PrimaryTarget_Perturbagen_Concordance_Heatmap_bottom10_top150.pdf")
+data_practice %>%
+  #dplyr::group_by(Perturbagen, Primary, Concordance) %>%
+  #dplyr::recode_factor(.Primary, levels())
+  ggplot(aes(x=Primary,y=factor(Perturbagen)))+
+  geom_tile(aes(fill=Concordance), size = 4) +
+  scale_fill_viridis(option = "E") +
+  theme(axis.text.x  = element_text(angle=45, hjust = 1, size = 6), axis.text.y = element_text(angle=45, hjust = 1, size = 2))
+dev.off()
+
+pdf("PrimaryTarget_Perturbagen_Concordance_Heatmap_uniquePerturbagens.pdf")
+LINCS_filter.7 %>%
+  #dplyr::group_by(Perturbagen, Primary, Concordance) %>%
+  #dplyr::recode_factor(.Primary, levels())
+  ggplot(aes(x=Primary,y=factor(Perturbagen)))+
+  geom_tile(aes(fill=Concordance), size = 4) +
+  scale_fill_viridis(option = "D") +
+  theme(
+    plot.title = element_text(color="white",hjust=0,vjust=1, size=1),
+    plot.background = element_rect(fill="gray20"),
+    panel.background = element_rect(fill="gray20"),
+    panel.border = element_rect(fill=NA,color="gray20", size=0.5, linetype="solid"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(), 
+    axis.text = element_text(color="white", size=rel(1.5),angle=45, hjust = 1),
+    axis.text.y  = element_text(hjust=1,angle=45, size = 1),
+    legend.text = element_text(color="white", size=rel(1.3)),
+    legend.background = element_rect(fill="gray20"),
+    legend.position = "bottom",
+    legend.title=element_blank()
+  )
+dev.off()
+
+
+```{r}
+LINCS_filter.8 <- LINCS_filter.7 %>%
+  group_by(Primary) %>%
+  tally(sort = T) %>%
+  ungroup() %>%
+  arrange(-desc(n))
+LINCS_filter.9 <- LINCS_filter.7
+LINCS_filter.9$Primary <- factor(LINCS_filter.9$Primary, levels = orderuse)
+
+orderuse <- LINCS_filter.8$Primary
+
+data_practice <- LINCS_filter.9 %>% 
+  as.data.frame() %>% 
+  arrange(desc(Concordance)) 
+#dim(data_practice) # 2243  x 11
+data_practice <- data_practice[c(1:20,1183:1353),]
+data_practice %>%
+  #dplyr::group_by(Perturbagen, Primary, Concordance) %>%
+  #dplyr::recode_factor(.Primary, levels())
+  ggplot(aes(x=Primary,y=factor(Perturbagen)))+
+  geom_tile(aes(fill=Concordance), size = 4) +
+  scale_fill_viridis(option = "D") +
+  theme(
+    plot.title = element_text(color="white",hjust=0,vjust=1, size=1),
+    plot.background = element_rect(fill="gray20"),
+    panel.background = element_rect(fill="gray20"),
+    panel.border = element_rect(fill=NA,color="gray20", size=0.5, linetype="solid"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(), 
+    axis.text = element_text(color="white", size=4.5,angle=45, hjust = 1),
+    axis.text.y  = element_text(hjust=1,angle=45, size = 1),
+    legend.text = element_text(color="white", size=rel(1.3)),
+    legend.background = element_rect(fill="gray20"),
+    legend.position = "bottom",
+    legend.title=element_blank()
+  )
+
+```
+pdf("PrimaryTarget_Perturbagen_Concordance_Heatmap_bottom10_top200.pdf")
+data_practice %>%
+  #dplyr::group_by(Perturbagen, Primary, Concordance) %>%
+  #dplyr::recode_factor(.Primary, levels())
+  ggplot(aes(x=Primary,y=factor(Perturbagen)))+
+  geom_tile(aes(fill=Concordance), size = 4) +
+  scale_fill_viridis(option = "D") +
+  theme(
+    plot.title = element_text(color="white",hjust=0,vjust=1, size=1),
+    plot.background = element_rect(fill="gray20"),
+    panel.background = element_rect(fill="gray20"),
+    panel.border = element_rect(fill=NA,color="gray20", size=0.5, linetype="solid"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_blank(),
+    axis.ticks = element_blank(), 
+    axis.text = element_text(color="white", size=4.5,angle=45, hjust = 1),
+    axis.text.y  = element_text(hjust=1,angle=45, size = 1),
+    legend.text = element_text(color="white", size=rel(1.3)),
+    legend.background = element_rect(fill="gray20"),
+    legend.position = "bottom",
+    legend.title=element_blank()
+  )
+
+dev.off()
+
+#add the neutral for lower priority and highlight the biggest reversal ones
+View(LINCS_filter.7)
+
+#extract the transcriptional profile
+```{r}
+LINCS_2
+data_practice <- LINCS_2 %>% 
+  as.data.frame() %>% 
+  arrange(-desc(Concordance)) 
+View(data_practice)
+drugsUse <- data_practice$SignatureId[1:50]
+drugsUse
+```
+
+```{r}
+#input genes avail by request to corresponding author, also avail if you complete the single cell workflow...
+referencegenes <- ResidualDiseaseAllGenes_textformat$Name_GeneSymbol
+comparegenes <- Top10_perturbagensFromAnnotated$Name_GeneSymbol
+
+samesame <- Reduce(intersect, list(referencegenes, comparegenes)) #confirmed as 83
+
+mysig <- ResidualDiseaseAllGenes_textformat[ResidualDiseaseAllGenes_textformat$Name_GeneSymbol %in% samesame,1:2]
+
+practicedata <- PracticeData_LincsViz[PracticeData_LincsViz$Name_GeneSymbol %in% samesame, 1:11]
+#2021_06_17
+practicedata <- Top10_perturbagensFromAnnotated[Top10_perturbagensFromAnnotated$Name_GeneSymbol %in% samesame, 1:11]
+
+combine <- merge(practicedata, mysig, by ="Name_GeneSymbol")
+
+combine <- combine %>% 
+  arrange(-desc(Value_LogDiffExp)) 
+
+
+#rownames(combine) <- combine$Name_GeneSymbol
+rownames(combine) <- factor(combine$Name_GeneSymbol, levels = combine$Name_GeneSymbol)
+combine <- combine[,2:12]
+combine <- as.matrix(combine)
+heatmap(combine, scale = "column", col = cm.colors(256))
+```
+
+```{r}
+#try another way:
+library("ggplot2")
+library("ggdendro")
+library("reshape2")
+library("grid")
+#scale the data variables (columns 4-9) so measurements have a mean value of 0 and a variance of 1.
+combine <- merge(practicedata, mysig, by ="Name_GeneSymbol")
+combine.scaled <- combine
+combine.scaled[, c(2:12)] <- scale(combine.scaled[, 2:12])
+
+# Force re-numbering of the rows after subsetting
+rownames(combine) <- NULL
+
+# Scale each measurement (independently) to have a mean of 0 and variance of 1
+
+
+# Run clustering
+combine.matrix <- as.matrix(combine.scaled[, -1])
+rownames(combine.matrix) <- combine.scaled$Name_GeneSymbol
+combine.dendro <- as.dendrogram(hclust(d = dist(x = combine.matrix)))
+
+# Create dendrogram plot
+dendro.plot <- ggdendrogram(data = combine.dendro, rotate = TRUE) + 
+  theme(axis.text.y = element_text(size = 4))
+
+# Heatmap
+
+# Data wrangling
+combine.long <- melt(combine.scaled, id = c("Name_GeneSymbol"))
+# Extract the order of the tips in the dendrogram
+combine.order <- order.dendrogram(combine.dendro)
+# Order the levels according to their position in the cluster
+combine.long$Name_GeneSymbol <- factor(x = combine.long$Name_GeneSymbol,
+                               levels = combine.scaled$Name_GeneSymbol[combine.order], 
+                               ordered = TRUE)
+
+# Create heatmap plot
+heatmap.plot <- ggplot(data = combine.long, aes(x = variable, y = Name_GeneSymbol)) +
+  geom_tile(aes(fill = value)) +
+  scale_fill_gradient2() +
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+
+# All together
+grid.newpage()
+print(heatmap.plot, vp = viewport(x = 0.4, y = 0.5, width = 0.8, height = 1.0))
+print(dendro.plot, vp = viewport(x = 0.90, y = 0.49, width = 0.2, height = ))
+```
+
+#top50
+```{r}
+Top50_perturbagensByConcordance
+
+practicedata <- Top50_perturbagensByConcordance[Top50_perturbagensByConcordance$Name_GeneSymbol %in% samesame, ]
+
+
+combine <- merge(practicedata, mysig, by ="Name_GeneSymbol")
+
+combine <- combine %>% 
+  arrange(-desc(Value_LogDiffExp)) 
+
+
+```
+
+```{r}
+#try another way:
+library("ggplot2")
+library("ggdendro")
+library("reshape2")
+library("grid")
+#scale the data variables (columns 4-9) so measurements have a mean value of 0 and a variance of 1.
+#combine <- merge(practicedata, mysig, by ="Name_GeneSymbol")
+# Scale each measurement (independently) to have a mean of 0 and variance of 1
+combine.scaled <- combine
+combine.scaled[, c(2:52)] <- scale(combine.scaled[, 2:52])
+
+# Force re-numbering of the rows after subsetting
+rownames(combine) <- NULL
+
+
+
+# Run clustering
+combine.matrix <- as.matrix(combine.scaled[, -1])
+rownames(combine.matrix) <- combine.scaled$Name_GeneSymbol
+combine.dendro <- as.dendrogram(hclust(d = dist(x = combine.matrix)))
+
+# Create dendrogram plot
+dendro.plot <- ggdendrogram(data = combine.dendro, rotate = TRUE) + 
+  theme(axis.text.y = element_text(size = 4))
+
+# Heatmap
+
+# Data wrangling
+combine.long <- melt(combine.scaled, id = c("Name_GeneSymbol"))
+# Extract the order of the tips in the dendrogram
+combine.order <- order.dendrogram(combine.dendro)
+# Order the levels according to their position in the cluster
+combine.long$Name_GeneSymbol <- factor(x = combine.long$Name_GeneSymbol,
+                               levels = combine.scaled$Name_GeneSymbol[combine.order], 
+                               ordered = TRUE)
+
+# Create heatmap plot
+heatmap.plot <- ggplot(data = combine.long, aes(x = variable, y = Name_GeneSymbol)) +
+  geom_tile(aes(fill = value)) +
+  scale_fill_gradient2() +
+  theme(axis.text.y = element_blank(),
+        axis.title.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "top")
+
+# All together
+grid.newpage()
+print(heatmap.plot, vp = viewport(x = 0.4, y = 0.5, width = 0.8, height = 1.0))
+print(dendro.plot, vp = viewport(x = 0.90, y = 0.495, width = 0.2, height = 0.86))
+```
+
+
+```{r}
+
+library(pheatmap)
+rownames(combine) <- combine$Name_GeneSymbol
+combine2 <- combine[,2:51]
+cal_z_score <- function(x){
+  (x - mean(x)) / sd(x)
+}
+ ###
+combine_norm <- t(apply(combine2, 1, cal_z_score))
+combine_norm <- cbind(combine[,52], combine_norm)
+colnames(combine_norm)[1] <- "RD_sig"
+fix <- as.data.frame(combine_norm)
+fix$RD_sig <- fix$RD_sig * 6
+combine_norm <- as.matrix(fix)
+pheatmap(combine_norm)
+ ###
+fix <- combine
+fix$Value_LogDiffExp <- fix$Value_LogDiffExp * 6
+fix[,2:51] <- fix[,2:51] * 12
+rownames(fix) <- fix$Name_GeneSymbol
+colnames(fix)[52] <- "RD_sig"
+fix <- fix[,-1]
+```
+#force order
+```{r}
+mysig.1 <- mysig %>% 
+  arrange(-desc(Value_LogDiffExp)) 
+rownames(mysig.1) <- mysig.1$Name_GeneSymbol
+
+fix <- fix[rownames(mysig.1),,drop=FALSE]
+
+```
+
+```{r}
+fix <- as.matrix(fix)
+pheatmap(fix)
+
+combine_norm <- t(apply(fix, 1, cal_z_score))
+
+my_hclust_gene <- hclust(dist(combine_norm), method = "complete")
+ 
+
+ 
+# load package
+library(dendextend)
+ 
+as.dendrogram(my_hclust_gene) %>%
+  plot(horiz = TRUE)
+
+#my_gene_col <- cutree(tree = as.dendrogram(my_hclust_gene), k = 2)
+#my_gene_col <- data.frame(cluster = ifelse(test = my_gene_col == 1, yes = "cluster 1", no = "cluster 2"))
+#row annotation
+#set.seed(1984)
+#my_random <- as.factor(sample(x = 1:2, size = nrow(my_gene_col), replace = TRUE))
+#my_gene_col$random <- my_random
+
+#col annotation
+my_sample_col <- data.frame(drug_type = c(drug_annotation, "NSCLC targeted-therapy")) #last is col numbers
+row.names(my_sample_col) <- colnames(combine_norm)
+
+my_sample_col2 <-  as.factor(c(cellline_annotation, "NSCLC Residual Disease")) 
+#row.names(my_sample_col2) <- colnames(combine_norm)
+my_sample_col$cell_line <- my_sample_col2
+row.names(my_sample_col) <- colnames(combine_norm)
+
+
+combine_norm.1 <- combine_norm * 20
+
+pheatmap(combine_norm, annotation_col = my_sample_col, angle_col= 45, fontsize= 6, fontsize_row = 3, scale = "none", color = inferno(10), cutree_cols = 2, cluster_rows=F, cluster_cols=T)
+
+```
+
+# all DEGs
+
+```{r}
+referencegenes <- allDEGs_lincs$Name_GeneSymbol
+comparegenes <- lincs_reversal_posneg$Name_GeneSymbol #has handpicked reversals
+
+samesame <- Reduce(intersect, list(referencegenes, comparegenes)) #confirmed as 178
+
+mysig <- allDEGs_lincs[allDEGs_lincs$Name_GeneSymbol %in% samesame,1:2]
+
+practicedata <- lincs_reversal_posneg[lincs_reversal_posneg$Name_GeneSymbol %in% samesame,]
+
+
+combine <- merge(practicedata, mysig, by ="Name_GeneSymbol")
+
+combine <- combine %>% 
+  arrange(-desc(Value_LogDiffExp)) 
+```
+
+
+```{r}
+library(pheatmap)
+rownames(combine) <- combine$Name_GeneSymbol
+combine2 <- combine[,2:12]
+cal_z_score <- function(x){
+  (x - mean(x)) / sd(x)
+}
+ ###
+combine_norm <- t(apply(combine2, 1, cal_z_score))
+View(combine_norm)
+colnames(combine_norm)[11] <- "RD_sig"
+combine_norm <- as.matrix(combine_norm)
+#pheatmap(combine_norm)
+```
+
+
+```{r}
+#my_hclust_gene <- hclust(dist(combine_norm), method = "complete")
+ 
+
+library(dendextend)
+ 
+#as.dendrogram(my_hclust_gene) %>%
+#  plot(horiz = TRUE)
+
+#my_gene_col <- cutree(tree = as.dendrogram(my_hclust_gene), k = 2)
+#my_gene_col <- data.frame(cluster = ifelse(test = my_gene_col == 1, yes = "cluster 1", no = "cluster 2"))
+#row annotation
+#set.seed(1984)
+#my_random <- as.factor(sample(x = 1:2, size = nrow(my_gene_col), replace = TRUE))
+#my_gene_col$random <- my_random
+
+#col annotation
+
+drug_annotation <- c("AZD-5438","XMD 8-92","BAY 61-3606","AT-7519","Kenpaullone","Seliciclib","AZD-5438","Mitoxantrone", "Dasatinib","Vandetanib")
+my_sample_col <- data.frame(drug_type = c(drug_annotation, "NSCLC targeted-therapy")) #last is col numbers
+row.names(my_sample_col) <- colnames(combine)[2:12]
+
+cellline_annotation <- c("MCF10A","MCF10A","MCF10A","MCF7","HEPG2","HEPG2","MCF7","MCF7", "MCF10A","ASC")
+
+
+
+my_sample_col2 <-  as.factor(c(cellline_annotation, "NSCLC Residual Disease")) 
+#row.names(my_sample_col2) <- colnames(combine_norm)
+my_sample_col$cell_line <- my_sample_col2
+#row.names(my_sample_col) <- colnames(combine_norm)
+
+
+
+#pheatmap(combine_norm.1, angle_col= 45, fontsize= 6, fontsize_row = 3, scale = "column", color = inferno(10), cluster_rows=F, cluster_cols=T)
+
+#pheatmap(combine_norm.1, angle_col= 45, fontsize= 6, fontsize_row = 3, scale = "none", color = inferno(10), cluster_rows=F, cluster_cols=T)
+colnames(combine)[12] <- "clinical_RD_signature"
+
+pheatmap(combine[,2:12], angle_col= 45, fontsize= 6, fontsize_row = 1.5, scale = "column", color = inferno(100), cluster_rows=F, cluster_cols=T, cutree_cols = 2, annotation_col = my_sample_col, breaks=seq(-5, 5, length.out=100))
+
+```
+
+
+#force order
+```{r}
+mysig.1 <- mysig %>% 
+  arrange(-desc(Value_LogDiffExp))
+rownames(mysig.1) <- orderuse
+
+
+combine_norm.1 <- combine_norm[rownames(mysig.1),,drop=FALSE]
+
+heatmap(combine_norm.1, scale = "column")
+```
+
+# adjusting order for final figure
+```{r}
+#original draft: 
+pheatmap(combine[,2:12], angle_col= 45, fontsize= 6, fontsize_row = 1.5, scale = "column", color = inferno(100), cluster_rows=F, cluster_cols=T, cutree_cols = 2, annotation_col = my_sample_col, breaks=seq(-3, 3, length.out=100))
+```
+```{r}
+#avail. by req. to corresponding author
+redo_LINCS <- read_excel("/PATH/SUPP./TABLE/EIGHT")
+
+```
+
+# Concentration
+```{r}
+#dplyr
+redo_LINCS$ConcentrationUse <- as.numeric(gsub("uM", "", redo_LINCS$Concentration))
+redo_LINCS$ConcentrationUse = as.numeric(as.character(redo_LINCS$ConcentrationUse), fixed = TRUE)
+pdf(file = "ConcentrationCounts.pdf")
+redo_LINCS %>%
+  dplyr::count(ConcentrationUse) %>% 
+  dplyr::mutate(percConc = n/sum(n) * 100) %>% 
+  ggplot(aes(x = factor(ConcentrationUse), y = n)) + 
+  geom_col() + 
+  #geom_text(aes(label = percConc), vjust = -0.4)+
+  labs(x = "Concentrations (uM)", y = "Counts", title = "Occurence of Concentrations")
+dev.off()
+```
+
+# Cell Line
+```{r}
+
+redo_LINCS.1 <- redo_LINCS %>%
+  #filter(!is.na(Gender) & Gender != "NULL") %>%
+  group_by(CellLine) %>%
+  tally(sort = T) %>%
+  ungroup() %>%
+  arrange(-desc(n))
+
+redo_LINCS.1$CellLine <- factor(redo_LINCS.1$CellLine, redo_LINCS.1$CellLine)
+
+pdf(file = "CellLine_Counts.pdf")
+redo_LINCS.1 %>%
+  ggplot(aes(x = CellLine, y = n)) + 
+  geom_col(width = 0.6, position = position_dodge(1)) + 
+  theme(axis.text.x  = element_text(angle=45, hjust = 1, size = 4.2)) +
+  labs(x = "Cell Line", y = "Counts", title = "Occurence of Cell Line")
+dev.off()
+```
+#Concordance
+```{r}
+pdf(file = "Concordance_Distribution.pdf")
+redo_LINCS %>%
+  ggplot(aes(x = Concordance)) + 
+  geom_histogram(bins = 50) + 
+  labs(x = "Concordance (filtered)", y = "Counts", title = "Distribution of Concordance (bins = 50)")
+dev.off()
+```
+# p val
+```{r}
+pdf(file = "Pval_Distribution.pdf")
+redo_LINCS %>%
+  ggplot(aes(x = pValue)) + 
+  geom_histogram(bins = 50) + 
+  labs(x = "P-value", y = "Counts", title = "Distribution of P-values (bins = 50)")
+dev.off()
+```
+# pick top 2 positive concordance and bottom 10 negative concordance
+```{r}
+redo_LINCS.2 <- redo_LINCS %>% 
+  arrange(-desc(Concordance))
+
+negative_10 <- redo_LINCS.2[1:10,]
+positive_2 <- redo_LINCS.2[4493:4494,]
+picks <- rbind(negative_10,positive_2)
+lincs_reversal_posneg <- read_excel("lincs_reversal_posneg.xlsx")
+```
+# 
+```{r}
+#referencegenes <- allDEGs_lincs$Name_GeneSymbol
+#comparegenes <- lincs_reversal_posneg$Name_GeneSymbol #has handpicked reversals
+#samesame <- Reduce(intersect, list(referencegenes, comparegenes)) #confirmed as 178
+
+mysig <- allDEGs_lincs[allDEGs_lincs$Name_GeneSymbol %in% samesame,1:2]
+
+practicedata <- lincs_reversal_posneg[lincs_reversal_posneg$Name_GeneSymbol %in% samesame,]
+
+
+combine <- merge(practicedata, mysig, by ="Name_GeneSymbol")
+
+combine <- combine %>% 
+  arrange(desc(Value_LogDiffExp)) 
+
+colnames(combine)[14] <- "RD_sig"
+
+pheatmap(combine[,2:14], angle_col= 45, fontsize= 6, fontsize_row = 1.5, scale = "column", color = inferno(100), cluster_rows=F, cluster_cols=T, cutree_cols = 2, annotation_col = my_sample_col, breaks=seq(-3, 3, length.out=100))
+
+rownames(combine) <- combine$Name_GeneSymbol
+combine2 <- combine[,2:14]
+cal_z_score <- function(x){
+  (x - mean(x)) / sd(x)
+}
+ ###
+combine_norm <- t(apply(combine2, 1, cal_z_score))
+View(combine_norm)
+combine_norm <- as.matrix(combine_norm)
+combine_norm <- combine_norm %>% 
+  arrange(desc(clinical_RD_signature)) 
+
+```
+
+
+```{r}
+#for long chemical name one: https://pubchem.ncbi.nlm.nih.gov/compound/742357#section=Synonyms
+drug_annotation <- c("Bruceantin","Bruceantin","STK270279","Emend","Mitoxantrone","AZD-5438","Seliciclib","Kenpaullone","AT-7519","BAY 61-3606","XMD 8-92", "AZD-5438")
+my_sample_col <- data.frame(drug_type = c(drug_annotation, "NSCLC targeted-therapy")) #last is col numbers
+row.names(my_sample_col) <- colnames(combine)[2:14]
+
+cellline_annotation <- c("MCF7","MCF7","MCF7","MCF7","HEPG2","MCF7","HEPG2","HEPG2", "MCF7","MCF10A","MCF10A","MCF10A")
+
+
+my_sample_col2 <-  as.factor(c(cellline_annotation, "NSCLC Residual Disease")) 
+#row.names(my_sample_col2) <- colnames(combine_norm)
+my_sample_col$cell_line <- my_sample_col2
+```
+
+#2021_06_17
+```{r}
+#referencegenes <- ResidualDiseaseAllGenes_FormatForiLINCS_textformat$Name_GeneSymbol
+#comparegenes <- Top10_perturbagensFromAnnotatedConcordances$Name_GeneSymbol
+#samesame <- Reduce(intersect, list(referencegenes, comparegenes)) #confirmed as 83
+#mysig <- ResidualDiseaseAllGenes_FormatForiLINCS_textformat[ResidualDiseaseAllGenes_FormatForiLINCS_textformat$Name_GeneSymbol %in% samesame,1:2]
+#practicedata <- Top10_perturbagensFromAnnotatedConcordances[Top10_perturbagensFromAnnotatedConcordances$Name_GeneSymbol %in% samesame, 1:11]
+#combine <- merge(practicedata, mysig, by ="Name_GeneSymbol")
+
+#combine <- combine %>% 
+#  arrange(desc(Value_LogDiffExp)) 
+
+
+colnames(combine)[12] <- "Residual Disease"
+combineUp <- combine %>% 
+  arrange(desc(`Residual Disease`)) 
+
+#combine$Name_GeneSymbol <- factor(x = combine$Name_GeneSymbol)
+#rownames(combine) <- combine$Name_GeneSymbol
+
+combineUp$Name_GeneSymbol <- factor(x = combineUp$Name_GeneSymbol)
+rownames(combineUp) <- combineUp$Name_GeneSymbol
+
+
+pheatmap(combine[,2:12], angle_col= 45, fontsize= 6, fontsize_row = 2.5, scale = "column", color = inferno(100), cluster_rows=F, cluster_cols=T, cutree_cols = 2, breaks=seq(-3, 3, length.out=100))
+
+pheatmap(combineUp[,2:12], angle_col= 45, fontsize= 6, fontsize_row = 2.5, scale = "column", color = inferno(100), cluster_rows=F, cluster_cols=T, cutree_cols = 2, breaks=seq(-3, 3, length.out=100), main = "Top 10 Negative Concordance Drugs")
+
+drug_annotation <- c("Momelotinib","Canertinib","Tamatinib","BIX01294", "AZD-5438","PD-98059","PD-98059","Dasatinib","CHEMBL585951","Dasatinib")
+my_sample_col <- data.frame(drug_type = c(drug_annotation, "NSCLC targeted-therapy")) #last is col numbers
+row.names(my_sample_col) <- colnames(combine)[2:12]
+cellline_annotation <- c("MCF10A","HA1E","MDAMB231","HA1E","HME1","HUH7","HUH7","HME1", "HME1","MDAMB231")
+my_sample_col2 <-  as.factor(c(cellline_annotation, "NSCLC Residual Disease")) 
+#row.names(my_sample_col2) <- colnames(combine_norm)
+my_sample_col$cell_line <- my_sample_col2
+
+
+```
+pheatmaps.obj <- pheatmap(combineUp[,2:12], angle_col= 45, fontsize= 6, fontsize_row = 2.5, scale = "column", color = inferno(100), cluster_rows=F, cluster_cols=T, cutree_cols = 2, annotation_col = my_sample_col, breaks=seq(-3, 3, length.out=100), main = "Top 10 Negative Concordance Drugs") 
+library(grid)
+showViewport()  #check viewport name
+
+
+pdf("ConcordanceHeatmap_AllDEGsRD_onlyNegConcordance.pdf")
+pheatmap(combine[,4:14], angle_col= 45, fontsize= 6, fontsize_row = 1.5, scale = "column", color = inferno(100), cluster_rows=F, cluster_cols=T, cutree_cols = 2, annotation_col = my_sample_col, breaks=seq(-3, 3, length.out=100), main = "Top 10 Negative Concordance Drugs")
+grid.text("Z-score", x=c(0.77),y=c(0.88,0.88), gp=gpar(fontsize=5))
+dev.off()
+
+

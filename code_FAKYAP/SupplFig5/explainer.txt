@@ -1,0 +1,9 @@
+explainer:
+
+- avicenna, rumi, and benchling are the servers/datasources for the code
+- avicenna was used for analysis, rumi was used for preprocessing
+- the ipynb scripts in avicenna comprise the 'analysis' scripts.
+- the *.sh files in rumi are used for preprocessing of the raw fastq data
+- rumi file structure contains the raw data mapping, which is to be transferred via a separate transfer
+
+JY 01/02/2024

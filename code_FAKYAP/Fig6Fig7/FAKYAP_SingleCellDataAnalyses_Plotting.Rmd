@@ -1,0 +1,799 @@
+---
+title: "2020_01_06_LAC_BL_005_FinalWorkflow_EditsAndRevisions"
+author: "Lauren Cech"
+date: "1/6/2021"
+output: html_document
+---
+
+## Load Packages and Add to Library
+```{r}
+#Use BiocManager::install() to load any new packages
+library(Seurat) #the following script uses version 3
+library(ggplot2)
+library(tidyverse)
+library(gridExtra)
+library(devtools)
+library(ggsignif)
+library(ggpubr)
+library(plotly)
+library(ggridges)
+library(reshape)
+library(gridExtra)
+library(ggrepel)
+library(ggExtra)
+library(readxl)
+library(RColorBrewer)
+library(rstatix)
+library(tibble)
+custom_theme <- theme(
+  plot.title = element_text(size=20, hjust = 0.5), 
+  legend.key.size = unit(0.7, "cm"), 
+  legend.text = element_text(size = 18))
+```
+## Download Data
+```{r}
+#All sequencing data avail at PRJNA766057 and PRJNA591860.
+#See https://github.com/czbiohub/scell_lung_adenocarcinoma for instructions on how to download data
+#Make a directory called "scell_lung_adenocarcinoma" in a location of your choice
+  #make a subdirectory called "gene_lists"
+  #make a subdirectory called "Data_input"
+  #make a subdirectory called "objects"
+```
+## Set Up Relative Directory
+```{r}
+# Relative directory for loading files from the project
+
+dir <- "INSERT/YOUR/PATH/HERE/TO/scell_lung_adenocarcinoma/"
+```
+## Load All Objects and Files
+```{r}
+# Seurat Single Cell File
+
+load(file = paste(dir, "Data_input/objects/NI04_tumor_seurat_object.RData", sep = ""))
+
+# If using Seurat version 3:
+
+tiss_subset_tumor2_v3 <- UpdateSeuratObject(tiss_subset_tumor2) 
+
+################################# 
+
+#Load lists containing differentially expressed genes in persister lung cancer cells and lung cancer cells overexpressing hyperactive YAP.
+
+#original Persister List (I believe PC9 specific)
+HyperactiveYAPUpregulatedGenes <- read_excel("SEE/SUPP/TABLE/THREE/FOR/YAP5SA_UP.xlsx")
+
+#available by request to corresponding author
+H358_RNAseq_PERSISTERvsDMSO_Sig_DGExp2339_logFC1.0_FDR0.05_Apr15_2020 <- read.delim("~/Downloads/H358_RNAseq_PERSISTERvsDMSO_Sig_DGExp2339_logFC1.0_FDR0.05_Apr15_2020.txt")
+H3122minus6_RNAseq_PERSISTERvsDMSO_Sig_DGExp1894_logFC1.0_FDR0.05_April15_2020 <- read.delim("~/Downloads/H3122minus6_RNAseq_PERSISTERvsDMSO_Sig_DGExp1894_logFC1.0_FDR0.05_April15_2020.txt")
+PC9_RNAseq_PERSISTERvsDMSO_Sig_DGExp2688_logFC1.0_FDR0.05_April15_2020 <- read.delim("~/Downloads/PC9_RNAseq_PERSISTERvsDMSO_Sig_DGExp2688_logFC1.0_FDR0.05_April15_2020.txt")
+
+
+#Get gene names only for H3122_H358_PC9 persister cell line upregulated genes
+H358Genes_names <- H358_RNAseq_PERSISTERvsDMSO_Sig_DGExp2339_logFC1.0_FDR0.05_Apr15_2020[1]
+H3122Genes_names <- H3122minus6_RNAseq_PERSISTERvsDMSO_Sig_DGExp1894_logFC1.0_FDR0.05_April15_2020[1]
+PC9Genes_names <- PC9_RNAseq_PERSISTERvsDMSO_Sig_DGExp2688_logFC1.0_FDR0.05_April15_2020[1]
+H3122_H358_PC9 <- unique(c("CD55","CLIC5","CLIC3","PHLDB2","TNNC1","GAS6","BMP4","CRISPLD2","RASSF5", "NPNT","TNNC1","GAS6","PHLDB2","EPAS1","BMP4","CLIC3","ITPR2","RASSF5","TNNC1","C1orf198","CLIC5","DLC1",  "EPB41L5","AGER","PHLDB2","CITED2","ZNF704","CD55","SH3RF1","LINC01133","NPNT"))
+HUGS <- HyperactiveYAPUpregulatedGenes_names$Gene
+
+```
+### Save Lists (optional)
+```{r}
+#Save, optional
+#write.csv(x = HUGS, file = "/PATH/scell_lung_adenocarcinoma/gene_lists/HyperactiveYAPUpregulatedGenes_names_characters_list.csv", sep = )
+#write.csv(x = PUGS, file = "/PATH/scell_lung_adenocarcinoma/gene_lists/PersisterUpregulatedGenes_names_characters_list.csv", sep = )
+#write.csv(x = DEG_PR_CL, file = "/PATH/gene_lists/DifferentiallyExpressedGenes_names_shared_between_PersisterH358H3122PC9Persisters_characters_list.csv")
+
+```
+
+## Identify Clinical Timepoint Markers: 
+Clinical timepoints in this study range from treatment naive ("naive"), residual disease ("grouped_pr"), and progressive disease ("grouped_pd"). Many data support persister cells in vitro as a model for the qualities exhibited at residual disease. We consider our persister cancer cell models to be comparable to the residual disease samples here, while acknowledging that there is no perfect model for residual disease. 
+
+### Define Initial DFs
+```{r}
+# Identify the cell names the match the clinical timepoints (treatment naive, residual disease, and progressive disease), location (lung), and patient(see below) we are interested in:
+
+PatientsUse <- c("TH185",
+                 "TH171",
+                 "TH179",
+                 "TH220",
+                 "TH238",
+                 "TH218",
+                 "TH231",
+                 "TH103",
+                 "TH248",
+                 "TH169",
+                 "TH236",
+                 "TH226",
+                 "TH205",
+                 "TH067",
+                 "TH266",
+                 "TH227",
+                 "TH225",
+                 "TH222",
+                 "TH158",
+                 "TH155",
+                 "TH210",
+                 "TH223",
+                 "TH217",
+                 "TH146")
+SingleCellPatientNamesUsed <- data.frame(PatientsUse)
+
+clinical_RD_cellsdf <- filter(tiss_subset_tumor2_v3@meta.data, analysis == "grouped_pr", biopsy_site == "Lung")
+clinical_RD_cellsdf<- subset(clinical_RD_cellsdf, patient_id %in% PatientsUse)
+clinical_PD_cellsdf <- filter(tiss_subset_tumor2_v3@meta.data, analysis == "grouped_pd", biopsy_site == "Lung")
+clinical_PD_cellsdf<- subset(clinical_PD_cellsdf, patient_id %in% PatientsUse)
+clinical_TN_cellsdf <- filter(tiss_subset_tumor2_v3@meta.data, analysis == "naive", biopsy_site == "Lung")
+clinical_TN_cellsdf<- subset(clinical_TN_cellsdf, patient_id %in% PatientsUse)
+
+# Do any of the cell ids differ?
+
+setdiff(clinical_RD_cellsdf$cell_id, tiss_subset_tumor2_v3@meta.data$cell_id)
+setdiff(clinical_PD_cellsdf$cell_id, tiss_subset_tumor2_v3@meta.data$cell_id)
+setdiff(clinical_TN_cellsdf$cell_id, tiss_subset_tumor2_v3@meta.data$cell_id)
+#0 for all
+
+GroupNames <- c('grouped_pd','grouped_pr','naive','combined')
+GroupDescription <-c('AllPrimaryCancerCellsLabeledAsAnalysisGroup_grouped_pd','AllPrimaryCancerCellsLabeledAsAnalysisGroup_grouped_pr','AllPrimaryCancerCellsLabeledAsAnalysisGroup_naive','AllPrimaryCancerCellsFromAllGroups')
+NumberOfCellsInGroup <- c(129, 488, 641, 1258)
+
+SingleCellTimepointCellSizes <- data.frame(GroupNames, GroupDescription, NumberOfCellsInGroup)
+```
+
+## Make Seurat Objects and scale
+```{r}
+SetCompare <- subset(tiss_subset_tumor2_v3, cells = c(clinical_PD_cellsdf$cell_id, clinical_RD_cellsdf$cell_id, clinical_TN_cellsdf$cell_id))
+
+#Set identity if not already correct:
+
+SetCompare <- SetIdent(SetCompare,  value = "analysis")
+table(SetCompare@active.ident)
+
+#note that if you wish to perform additional rounds of clustering after subsetting it is recommended that you re-run FindVariableFeatures() and ScaleData()
+# I scale on all genes because, while PCA and clustering remain unaffected, heatmaps could be dominated by highly-expressed genes if no scaling is done. 
+
+SetCompare <- FindVariableFeatures(SetCompare, selection.method = "vst", nfeatures = 2000)
+SetCompare <- ScaleData(SetCompare, features = all.genes)
+```
+
+## Find All Markers
+```{r}
+#Find differentially expressed (DE) genes for each identity
+SetCompare_DE <- FindAllMarkers(SetCompare)
+
+
+
+#Write CSV files:
+#write.csv(x = SetCompare_DE, file = paste(dir, "gene_lists/SetComparePersisterSignature_2020_01_07.csv", sep = ""))
+```
+
+## Separate Clutsers
+```{r}
+# Inspect the number of DEGs in each group/cluster
+table(SetCompare_DE$cluster)
+
+#Get DE genes for each group
+SetCompare_DE_clinical_PD <- filter(SetCompare_DE, cluster == "grouped_pd")
+SetCompare_DE_clinical_TN <- filter(SetCompare_DE, cluster ==  "naive")
+SetCompare_DE_clinical_RD <- filter(SetCompare_DE, cluster ==  "grouped_pr")
+```
+### Save Files
+```{r}
+#Write CSV files:
+#write.csv(x = SetCompare_DE_clinical_PD, file = paste(dir, "gene_lists/SetCompare_DE_clinical_PD_prefilter_2020_01_11.csv", sep = ""))
+#write.csv(x = SetCompare_DE_clinical_RD, file = paste(dir, "gene_lists/SetCompare_DE_clinical_RD_prefilter_2020_01_11.csv", sep = ""))
+#write.csv(x = SetCompare_DE_clinical_TN, file = paste(dir, "gene_lists/SetCompare_DE_clinical_TN_prefilter_2020_01_11.csv", sep = ""))
+```
+
+## Filter Sets
+```{r}
+#Sets clinical_PD for adjusted p-value (Bonferonni correction for multiple hypothesis testing) <0.05, av_logFC>0.0:
+SetCompare_DE_clinical_PD_filtered <- SetCompare_DE_clinical_PD %>% filter(p_val_adj < 0.05)
+SetCompare_DE_clinical_PD_filtered <- SetCompare_DE_clinical_PD_filtered %>% filter(avg_logFC > 0.0)
+
+#Sets clinical RD or adjusted p value <0.05, av_logFC>0.0:
+SetCompare_DE_clinical_RD_filtered <- SetCompare_DE_clinical_RD %>% filter(p_val_adj < 0.05)
+SetCompare_DE_clinical_RD_filtered <- SetCompare_DE_clinical_RD_filtered %>% filter(avg_logFC > 0.0)
+
+#Sets clinical_TN or adjusted p value <0.05, av_logFC>0.0:
+SetCompare_DE_clinical_TN_filtered <- SetCompare_DE_clinical_TN %>% filter(p_val_adj < 0.05)
+SetCompare_DE_clinical_TN_filtered <- SetCompare_DE_clinical_TN_filtered %>% filter(avg_logFC > 0.0)
+```
+
+### Save Files
+```{r}
+#Write CSV files:
+write.csv(x = SetCompare_DE_clinical_PD_filtered, file = paste(dir, "gene_lists/SetCompare_DE_clinical_PD_filtered_2020_01_11.csv", sep = ""))
+write.csv(x = SetCompare_DE_clinical_RD_filtered, file = paste(dir, "gene_lists/SetCompare_DE_clinical_RD_filtered_2020_01_11.csv", sep = ""))
+write.csv(x = SetCompare_DE_clinical_TN_filtered, file = paste(dir, "gene_lists/SetCompare_DE_clinical_TN_filtered_2020_01_11.csv", sep = ""))
+```
+
+## Identify Consistent Genes
+### Separate Differentially Expressed Genes by Analysis Group and Set
+```{r}
+#clinical_PD  FC >0
+SetCompare_DE_clinical_PD_genes <-  as.character(unlist(SetCompare_DE_clinical_PD_filtered[,'gene']))
+
+#clinical_TN  FC >0
+SetCompare_DE_clinical_TN_genes <-  as.character(unlist(SetCompare_DE_clinical_TN_filtered[,'gene']))
+
+#clinical_RD FC >0
+SetCompare_DE_clinical_RD_genes <-  as.character(unlist(SetCompare_DE_clinical_RD_filtered[,'gene']))
+                                                        
+                                                        
+compare_clinical_genes_all <- c(SetCompare_DE_clinical_RD_genes, SetCompare_DE_clinical_PD_genes, SetCompare_DE_clinical_TN_genes)
+```
+
+
+
+## Look at Data
+### Visualize with Heatmap
+```{r}
+# using SetCompare Seurat object because we have subsetted the original object (tiss_subset_tumor2_v3) to obtain these clinical timepoint differentially expressed genes, and this SetCompare data has already been scaled for these specific cells.
+
+DoHeatmap(SetCompare, features = SetCompare_DE_clinical_RD_genes)
+
+```
+
+### Determine Optimal Clustering
+```{r}
+PreDimReductionData_PrimaryNoAZ <- SetCompare
+DimReductionData_PrimaryNoAZ_ReduceByCompareGenes <- RunPCA(SetCompare, features = SetCompare_DE_clinical_RD_genes)
+DimReductionData_PrimaryNoAZ_ReduceByVariableFeatures <- RunPCA(SetCompare, features = VariableFeatures(object = SetCompare))
+
+# Visualize Reductions, choose best dispersion bw analysis groups
+
+DimPlot(DimReductionData_PrimaryNoAZ_ReduceByCompareGenes, reduction = "pca",group.by = 'analysis')
+DimPlot(DimReductionData_PrimaryNoAZ_ReduceByVariableFeatures, reduction = "pca",group.by = 'analysis')
+
+
+ElbowPlot(DimReductionData_PrimaryNoAZ_ReduceByCompareGenes)
+# max 15 dimensions describe this data
+DimReductionData_PrimaryNoAZ_ReduceByCompareGenes <- FindNeighbors(DimReductionData_PrimaryNoAZ_ReduceByCompareGenes, dims = 1:15)
+DimReductionData_PrimaryNoAZ_ReduceByCompareGenes <- FindClusters(DimReductionData_PrimaryNoAZ_ReduceByCompareGenes)
+DimReductionData_PrimaryNoAZ_ReduceByCompareGenes <- RunUMAP(DimReductionData_PrimaryNoAZ_ReduceByCompareGenes, dims = 1:15)
+DimReductionData_PrimaryNoAZ_ReduceByCompareGenes <- RunTSNE(DimReductionData_PrimaryNoAZ_ReduceByCompareGenes, dims = 1:15)
+saveRDS(DimReductionData_PrimaryNoAZ_ReduceByCompareGenes, file = "/YOUR/PATH/scell_lung_adenocarcinoma/Data_input/objects/DimReductionData_PrimaryNoAZ_ReduceByCompareGenes.rds")
+```
+
+### Visualize Dimensional Reduction Plots for Optimized Data
+```{r}
+DimPlot(DimReductionData_PrimaryNoAZ_ReduceByCompareGenes, reduction = "umap", group.by = 'analysis')
+DimPlot(DimReductionData_PrimaryNoAZ_ReduceByCompareGenes, reduction = "tsne", group.by = 'analysis')
+```
+### Visualize with Feature Plot Expression Projection RD Genes (conserved)
+```{r}
+ObjectUse<- DimReductionData_PrimaryNoAZ_ReduceByCompareGenes
+# Set up dataframe for clinical RD gene expression information
+RD_sig_DF <- FetchData(ObjectUse, c(SetCompare_DE_clinical_RD_genes, 'nCount_RNA','nFeature_RNA','analysis','patient_id','sample_name','biopsy_site', 'cell_id'))
+
+#Calculate mean expression of the signature on per cell basis:
+
+mean_exp_RD_genes<- rowMeans(x = RD_sig_DF[ ,SetCompare_DE_clinical_RD_genes], na.rm = TRUE)
+
+if (all(names(x = mean_exp_RD_genes) == names(x = ObjectUse@meta.data$cell_id))) {
+  ObjectUse@meta.data$RD_score_DEGs <- mean_exp_RD_genes
+}
+
+
+FeaturePlot(object = ObjectUse, features = "RD_score_DEGs", reduction = "umap", order = TRUE, min.cutoff = "q50")
+```
+
+### Visualize with Feature Plot Expression Projection Persister Genes
+```{r}
+#DEG_PR_CL_DF <- FetchData(ObjectUse, c(DEG_PR_CL, 'nCount_RNA','nFeature_RNA','analysis','patient_id','sample_name','biopsy_site', 'cell_id'))
+#HLA.E, OSER1.AS1, TNRC6C.AS1, HLA.DMA, NME1.NME2 not found within Seurat object so need to rename them within list:
+
+DEG_PR_CL_DF <- FetchData(ObjectUse, c(H3122_H358_PC9, 'nCount_RNA','nFeature_RNA','analysis','patient_id','sample_name','biopsy_site', 'cell_id'))
+
+#find mean expression of the signature per cell:
+mean_exp_DEG_PR_CL<- rowMeans(x = DEG_PR_CL_DF[ ,DEG_PR_CL_fix], na.rm = TRUE)
+
+if (all(names(x = mean_exp_DEG_PR_CL) == names(x = ObjectUse@meta.data$cell_id))) {
+  
+  ObjectUse@meta.data$Persister_CellLine_DEGs_score <- mean_exp_DEG_PR_CL
+}
+
+
+q <- FeaturePlot(object = ObjectUse, features = "Persister_CellLine_DEGs_score", reduction = "umap", order = TRUE, min.cutoff = "q50",pt.size = 0.1) 
+q
+```
+
+## Generate Persister/RD Signature
+```{r}
+
+# Using conserved single cell differentially expressed RD gene set ("SetCompare_DE_clinical_RD_genes") and combined cell line persister genes ("DEG_PR_CL")
+
+RD_singlecellDEGS_DEG_PR_CL <- Reduce(intersect, list(SetCompare_DE_clinical_RD_genes, H3122_H358_PC9))
+write.csv(x = RD_singlecellDEGS_DEG_PR_CL, file = paste(dir, "gene_lists/RDsinglecellDEGS_overlapping_PersisterCellLineDEGs.csv", sep = ""))
+```
+
+
+## Visualize Persister/RD Signature
+
+
+### FeaturePlot Sum Expression Projection
+```{r}
+
+#RD_singlecellDEGS_DEG_PR_CL
+DF <- FetchData(ObjectUse, c(RD_singlecellDEGS_DEG_PR_CL, 'nCount_RNA','nFeature_RNA','analysis','patient_id','sample_name','biopsy_site', 'cell_id'))
+
+exp_RD_DEG_PR_CL <- rowMeans(DF[ ,RD_singlecellDEGS_DEG_PR_CL])
+
+if (all(names(x = exp_RD_DEG_PR_CL) == names(x = ObjectUse@meta.data$cell_id))) {
+
+  ObjectUse@meta.data$SingleCell_RD_and_PersisterCellLinesDEGs_score <- exp_RD_DEG_PR_CL
+}
+
+FeaturePlot(object = ObjectUse, features = "SingleCell_RD_and_PersisterCellLinesDEGs_score", reduction = "umap", order = TRUE, min.cutoff = "q25")
+
+```
+
+## Generate YAP relevant Persister/RD signatures
+```{r}
+
+# Using conserved single cell differentially expressed RD gene set ("SetCompare_DE_clinical_RD_genes") , combined cell line persister genes ("DEG_PR_CL"), and pc9 hyperactive yap upregulated genes ("HUGS")
+
+H358_and_clinicalRD_and_HUGS <- Reduce( intersect, list(H358Genes_names$Gene, HUGS, SetCompare_DE_clinical_RD_genes))
+H3122_and_clinicalRD_and_HUGS <- Reduce( intersect, list(H3122Genes_names$Gene, HUGS, SetCompare_DE_clinical_RD_genes))
+PC9_and_clinicalRD_and_HUGS <- Reduce( intersect, list(PC9Genes_names$Gene, HUGS, SetCompare_DE_clinical_RD_genes)) 
+
+#CLPR <- unique(c(H358_and_clinicalRD_and_HUGS, H3122_and_clinicalRD_and_HUGS, PC9_and_clinicalRD_and_HUGS))#these are not shared among all cell line DEGs sets, but rather combined together to form a combined cell line persister profile.
+
+CLPR <-c("GAS6","EPAS1","BMP4","PHLDB2","TNNC1","CD55","GLS","CLIC5","CLIC3","CITED2","CYBRD1","EPB41L5","C1orf198","DLC1","BEX2","AGER","ITPR2")
+
+```
+
+## Gene Set Expression calculations
+### Mean per cell
+```{r}
+#Gene set: Cell Line + YAP+ sampled/conserved RD from single cell (CLPR)
+exp_CLPR <- rowMeans(finaldata[ ,CLPR])
+if (all(names(x = exp_CLPR) == names(x = ObjectUse@meta.data$cell_id))) {
+  ObjectUse@meta.data$CLPR_score <- exp_CLPR
+}
+```
+
+## Visualization
+```{r} 
+finaldata <- FetchData(ObjectUse, c(CLPR, 'nCount_RNA', 'nFeature_RNA', 'patient_id', 'gender', 'race', 'histolgy', 'driver_gene', 'driver_mutation', 'treatment', 'percent.PFS.reference.values', 'smokingHx','analysis','cell_id', 'biopsy_site', 'CLPR_sum', 'CLPR_score'))
+```
+###Heatmap
+```{r}
+DoHeatmap(ObjectUse, features = CLPR, group.by = 'analysis', size = 3, angle = 23, group.colors = c("black", "darkgray", "lightgray"), draw.lines = TRUE, lines.width = 5, disp.min = 0) + scale_fill_gradientn(colors = c("black", "white", "purple"))
+```
+### Dot Plot
+```{r}
+DotPlot(ObjectUse, features = CLPR, group.by = 'analysis', col.min = 0)
+```
+
+### Dimensional Plot of Gene Set Expression
+#### Mean
+```{r}
+p<- DimPlot(object = ObjectUse, reduction = "tsne", group.by = 'analysis', cols = c("#CD5C5C","#CFB53B", "#696969"))
+q <-FeaturePlot(object = ObjectUse, features = "CLPR_score", reduction = "tsne", order = TRUE, min.cutoff = "q50")
+p+q
+```
+
+
+
+### Mean Expression Boxplot CLPR
+```{r}
+#using Kruskal Wallis Test bc it is nonparametric , current expression levels do not meet the assumptions of one-way ANOVA. It will assess for significant differences on a continuous dependent variable (sum or mean expression of the gene set) by a categorical independent variable with two or more groups(grouped_pd, grouped_pr, naive).
+
+test <- kruskal.test(x = finaldata$CLPR_score, g = finaldata$analysis)
+Kruskal_Wallis_ChiSq_Statistic_MeanCLPR <- test$statistic
+Kruskal_Wallis_pVal_MeanCLPR <- test$p.value
+
+#Dunn's test for pairwise multiple comparisons of the ranked data. The mean rank of the different groups is compared. Used for post-hoc test following Kruskal-Wallis test.
+
+final_stats_meanCLPR<- dunn_test(finaldata, CLPR_score~analysis, p.adjust.method = "bonferroni", detailed = TRUE)
+SignificanceTable_MeanCLPR_w_DunnsTestResults_and_KruskallWallisStats <- data.frame(final_stats_meanCLPR, Kruskal_Wallis_ChiSq_Statistic_MeanCLPR,Kruskal_Wallis_pVal_MeanCLPR)
+
+#plot
+
+l <- ggplot(finaldata, aes(x = analysis, y = CLPR_score, fill = analysis)) + xlab("Group") + ylab("Expression Level (Log-Normalized)") + ggtitle("Mean Gene Set Expression Level in Primary Tumor") + geom_signif(comparisons = list(c("grouped_pd", "grouped_pr")), map_signif_level=TRUE, y_position = 1.7, annotations = '2.06e-25') + geom_signif(comparisons = list(c("grouped_pd", "naive")), map_signif_level=TRUE, y_position = 2, annotations = '1.33e-06') + geom_signif(comparisons = list(c("grouped_pr", "naive")), map_signif_level=TRUE, y_position = 1.8, annotations = '2.18e-142') +   scale_x_discrete(limits=c("naive", "grouped_pr", "grouped_pd")) + theme(legend.position = "none") + fill_palette(palette = c("#CD5C5C","#CFB53B", "#696969"))
+l +geom_boxplot() +theme_classic() 
+#2020_01_12_LAC_BL_005_boxplot_meanExpression_CLPR
+
+```
+
+## Single Gene Boxplot Template
+```{r}
+#X is any gene name
+testX <- kruskal.test(x = finaldata$X, g = finaldata$analysis)
+Kruskal_Wallis_ChiSq_Statistic_X <- testX$statistic
+Kruskal_Wallis_pVal_X <- testX$p.value
+
+final_stats_X<- dunn_test(finaldata, X~analysis, p.adjust.method = "bonferroni", detailed = TRUE)
+
+                #pd              pr
+#pr        1.833054e-62
+#naive    .5891432          2.107858e-46
+n <- ggplot(finaldata, aes(x = analysis, y = X, fill = analysis)) + xlab("Group") + ylab("Gene Expression Level") + ggtitle("X Expression in Primary Tumor") + geom_signif(comparisons = list(c("grouped_pd", "grouped_pr")), map_signif_level=TRUE, y_position = 3.8, annotations = '1.833054e-62') + geom_signif(comparisons = list(c("grouped_pd", "naive")), map_signif_level=TRUE, y_position = 4.1, annotations = '.5891432') + geom_signif(comparisons = list(c("grouped_pr", "naive")), map_signif_level=TRUE, y_position = 3.6, annotations = '2.107858e-46') +   scale_x_discrete(limits=c("naive", "grouped_pr", "grouped_pd")) + theme(legend.position = "none") + fill_palette(palette = c("#CD5C5C","#CFB53B", "#696969"))
+n +geom_boxplot() +theme_classic()
+```
+
+
+```{r}
+#tables avail. by request to corresponding author
+OriginalGeneSetInformation
+SingleCellPatientNamesUsed
+SingleCellTimepointCellSizes
+SingleCellDEGsInformation
+CombinedGeneSetInformation
+GeneAndGeneSetExpressionStats
+SingleCellMetaDataWGeneSetExpressionScores
+
+write.table(x = SingleCellMetaDataWGeneSetExpressionScores, file = "/Users/lcech/Desktop/SendToFranzi/SingleCellMetaDataWGeneSetExpressionScores.txt")
+#table of stats for single gene comparisons avail by request to corresponding author
+conserved_clinical_RD_genes2
+conserved_clinical_PD_genes2
+conserved_clinical_TN_genes2
+write.csv(x = conserved_clinical_TN_genes2, file = "/Users/lcech/Desktop/SendToFranzi/naive_DEGs.csv")
+CLPR
+write.csv(x = CLPR, file = "/PATH/CLPR.csv")
+```
+
+
+# FAK analysis
+```{r}
+#if you cannot locate, avail by request to corresponding author
+load("/LOCATION/OF/IM06_ALL_cells_Immune_AND_nonImmune_annotations-016.RData")
+tiss_subset <- UpdateSeuratObject(tiss_subset)
+table(tiss_subset@meta.data$Final_annotation)
+table(tiss_subset@meta.data$analysis)
+
+clinical_RD_cellsdf <- filter(tiss_subset@meta.data, analysis == "grouped_pr")
+
+clinical_PD_cellsdf <- filter(tiss_subset@meta.data, analysis == "grouped_pd")
+
+clinical_TN_cellsdf <- filter(tiss_subset@meta.data, analysis == "naive")
+FAKObject <- subset(tiss_subset, cells = c(clinical_PD_cellsdf$cell_id, clinical_RD_cellsdf$cell_id, clinical_TN_cellsdf$cell_id))
+FAKObject <-SetIdent(FAKObject,  value = "analysis")
+FAKObject<- FindVariableFeatures(FAKObject, selection.method = "vst", nfeatures = 2000)
+FAKObject<- ScaleData(FAKObject)
+FAKObject <- RunPCA(FAKObject)
+ElbowPlot(FAKObject, ndims =50)
+FAKObject <- RunUMAP(FAKObject, dims = 1:30)
+FAKObject <- RunTSNE(FAKObject, dims = 1:30)
+DimPlot(FAKObject, reduction = "umap")
+DimPlot(FAKObject, reduction = "tsne", group.by = 'analysis')
+
+#note there are two lung annotations ("lung" and "Lung")
+```
+
+``` {r}
+table(FAKObject@meta.data$treatment) #vs
+table(FAKObject@meta.data$treatmentadjust)
+table(FAKObject@meta.data$ClinicalTimepoint)
+#Acquired Resistance    Residual Disease     Treatment Naive 
+#              10200                6005                7056
+#table(FAKObject@meta.data$Final_annotation)
+table(FAKObject@meta.data$biopsy_site) #vs
+table(FAKObject@meta.data$BiopsySite)
+#Adrenal      Brain      Liver       Lung Lymph Node     Pleura 
+#    774         75       2683      11312       5156       3261 
+#FAKObject@meta.data$treatmentadjust <- FAKObject@meta.data$treatment
+table(FAKObject@meta.data$primary_or_metastaic, FAKObject@meta.data$BiopsySite)
+table(FAKObject@meta.data$BiopsySite, FAKObject@meta.data$BiopsyStage)
+table(FAKObject@meta.data$ClinicalTimepoint, FAKObject@meta.data$BiopsyStage)
+
+
+
+
+FAKObject@meta.data <- FAKObject@meta.data %>% mutate(treatmentadjust =
+                     case_when(treatment == "alectinib" ~ "Alectinib [ALKi]", 
+                               treatment == "erlotinib" ~ "Erlotinib [EGFRi]",
+                               treatment == "ceritinib/trametinib" ~ "Combinatorial",
+                               treatment == "erlotinib/gemcitabine" ~ "Combinatorial",
+                               treatment == "dabrafenib/trametinib" ~ "Combinatorial",
+                               treatment == "None" ~ "None",
+                               treatment == "osimertinib" ~ "Osimertinib [EGFRi]",
+                               treatment == "crizotinib" ~ "Crizotinib [ALKi; ROS1i]",
+                               treatment == "followed elsewhere" ~ "Left Treatment",
+                               treatment == "radiation" ~ "Radiation",
+                               treatment == "lorlatinib" ~ "Lorlatinib [ALKi; ROS1i]",
+                               treatment == "trametinib" ~ "Trametinib [MEKi]"))
+
+FAKObject@meta.data <- FAKObject@meta.data %>% mutate(ClinicalTimepoint =
+                     case_when(analysis == "naive" ~ "Treatment Naive", 
+                               analysis == "grouped_pr" ~ "Residual Disease",
+                               analysis == "grouped_pd" ~ "Acquired Resistance"))
+
+FAKObject@meta.data <- FAKObject@meta.data %>% mutate(BiopsySite =
+                     case_when(biopsy_site == "Adrenal" ~ "Adrenal", 
+                               biopsy_site == "Brain" ~ "Brain",
+                               biopsy_site == "Liver" ~ "Liver",
+                               biopsy_site == "LN" ~ "Lymph Node",
+                               biopsy_site == "lung" ~ "Lung",
+                               biopsy_site == "Lung" ~ "Lung",
+                               biopsy_site == "Pleura" ~ "Pleura"))
+
+FAKObject@meta.data <- FAKObject@meta.data %>% mutate(BiopsyStage =
+                     case_when(BiopsySite == "Adrenal" ~ "Metastatic", 
+                               BiopsySite == "Brain" ~ "Metastatic",
+                               BiopsySite == "Liver" ~ "Metastatic",
+                               BiopsySite == "Lymph Node" ~ "Metastatic",
+                               BiopsySite == "Lung" ~ "Primary",
+                               BiopsySite == "Pleura" ~ "Metastatic")) #need to check for NAs
+
+#how many are lung metastases?
+table(FAKObject@meta.data$Final_annotation)
+
+
+FAKObject@meta.data <- FAKObject@meta.data %>% mutate(CellPopulation =
+                     case_when(Final_annotation == "alveolar type 1 cell" ~ "AT1 Cell", 
+                               Final_annotation == "alveolar type 2 cell" ~ "AT2 Cell",
+                               Final_annotation == "B-cells-M" ~ "Memory B-Cell",
+                               Final_annotation == "B-cells-PB" ~ "Plasmablast B-Cell",
+                               Final_annotation == "basal cell" ~ "Basal Cell",
+                               Final_annotation == "ciliated cell" ~ "Ciliated Cell",
+                               Final_annotation == "club cell" ~ "Club Cell",
+                               Final_annotation == "Dendritic" ~ "Dendritic Cell",
+                               Final_annotation == "endothelial" ~ "Endothelial Cell",
+                               Final_annotation == "fibroblast" ~ "Fibroblast",
+                               Final_annotation == "hepatocyte" ~ "Hepatocyte",
+                               Final_annotation == "Mast-cells" ~ "Mast Cell",
+                               Final_annotation == "melanocytes" ~ "Melanocyte",
+                               Final_annotation == "MF-Monocytes" ~ "Macrophage-Monocyte",
+                               Final_annotation == "neuro.e cell" ~ "Neuroendocrine Cell",
+                               Final_annotation == "Neutrophils" ~ "Neutrophil",
+                               Final_annotation == "pDCs" ~ "Plasmacytoid Dendritic Cell",
+                               Final_annotation == "T-cells" ~ "T-Cell",
+                               Final_annotation == "tumor" ~ "Tumor Cell",
+                               Final_annotation == "Unknown" ~ "Unknown Cell 1",
+                               Final_annotation == "unknown stroma1" ~ "Unknown Stromal Cell 1",
+                               Final_annotation == "unknown stroma2" ~ "Unknown Stromal Cell 2",
+                               Final_annotation == "unknown stroma3" ~ "Unknown Stromal Cell 3",
+                               Final_annotation == "unknown stroma4" ~ "Unknown Stromal Cell 4",
+                               Final_annotation == "unknown stroma5" ~ "Unknown Stromal Cell 5",
+                               Final_annotation == "ionocyte" ~ "Ionocyte"))
+
+FAKObject@meta.data <- FAKObject@meta.data %>% mutate(CellPopulation_State = paste(CellPopulation, ClinicalTimepoint, sep = ' '))
+
+table(FAKObject@meta.data$CellPopulation_State)
+
+
+```
+
+```{r}
+FAK_Signature <- c("PTK2","NEDD9","PEAK1","AFAP1L2","DOCK1","FYN","GIT2","VCL","EPHB1","TNK2","IL31RA","ACTN1","BCAR3","PTPRE","ABL1","CDK1","MAP1B","PIK3R2","CAVIN1","MYH9","NOV")
+# Get top 20 genes enriched in tumor cells
+FAKObject.1 <-SetIdent(FAKObject,  value = "CellPopulation_State")
+#tumor_enriched <- FindMarkers(FAKObject.1, ident.1 = "tumor", verbose = FALSE) %>%
+#  arrange(-avg_log2FC) %>%
+#  rownames_to_column(var = "gene") %>%
+#  pull(gene) %>% 
+#  .[1:20]
+#this is all top tumor markers; too much memory...
+
+#ibroblast markers
+load("/Volumes/My Passport for Mac/Rdata/FAKObject.1.rds")
+
+
+FAK_features <- list(c(
+  'PTK2',
+  'NEDD9',
+  'PEAK1',
+  'AFAP1L2',
+  'DOCK1',
+  'FYN',
+  'GIT2',
+  'VCL',
+  'EPHB1',
+  'TNK2',
+  'IL31RA',
+  'ACTN1',
+  'BCAR3',
+  'PTPRE',
+  'ABL1',
+  'CDK1',
+  'MAP1B',
+  'PIK3R2',
+  'PTRF',
+  'MYH9',
+  'NOV'
+  ))
+FAKObject.1 <- AddModuleScore(
+  object = FAKObject.1,
+  features = c(FAK_features),
+  ctrl = 30,
+  name = c('FAK_markers')
+)
+
+
+
+
+identities <- c("Fibroblast Treatment Naive","Fibroblast Residual Disease","Fibroblast Acquired Resistance","Tumor Cell Residual Disease" ,"Tumor Cell Acquired Resistance","Tumor Cell Treatment Naive","AT1 Cell Treatment Naive","AT1 Cell Residual Disease","AT2 Cell Treatment Naive","AT2 Cell Residual Disease","AT1 Cell Acquired Resistance","AT2 Cell Acquired Resistance")
+
+table(FAKObject@meta.data$Final_annotation,FAKObject@meta.data$BiopsyStage,FAKObject@meta.data$BiopsySite)
+table(FAKObject@meta.data$Final_annotation,FAKObject@meta.data$biopsy_site)
+table(FAKObject@meta.data$biopsy_site,FAKObject@meta.data$patient_id)
+
+
+```
+
+
+setwd("/Users/lcech/Desktop/Keystone/UCSF/Collaborations")
+pdf("plot_FAKSignatureExpressionSummary_CellPopulationComparison.pdf", family="Arial", width=12, height=4)
+(p10 | p11 + plot_layout(guides = 'auto'))
+dev.off()
+setwd("/Users/lcech/Desktop/Keystone/UCSF/Collaborations/YAP/Scripts")
+
+```{r}
+table(FAKObject.1@meta.data$CellPopulation)
+
+
+p5<-VlnPlot(
+  object = FAKObject.1, 
+  features = "FAK_markers1", 
+  idents = c("Tumor Cell Acquired Resistance","Tumor Cell Residual Disease","Tumor Cell Treatment Naive"), 
+  pt.size = 0,
+  split.by = "ClinicalTimepoint",
+  cols = c("#D55E00","grey39","#0072B2")) +
+  ggtitle("Tumor Cell FAK Signature") +
+  theme(legend.position = 'none')+
+  custom_theme +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank())
+
+
+p7 <- VlnPlot(
+  object = FAKObject.1, 
+  features = "FAK_markers1", 
+  idents = c("Tumor Cell Acquired Resistance","Tumor Cell Residual Disease","Tumor Cell Treatment Naive"), 
+  pt.size = 0,
+  group.by = "BiopsyStage",
+  split.by = "ClinicalTimepoint", 
+  cols = c("#D55E00","grey39","#0072B2")) +
+  ggtitle("Tumor Cell FAK Signature") +
+  custom_theme +
+  theme(axis.title.x=element_blank())
+
+
+((p4 / p5 + plot_layout(guides = 'auto')) | (p6 / p7 + plot_layout(guides = 'auto')))
+
+dataUse <- FetchData(FAKObject.1, vars = c('cell_id', 'BiopsyStage','ClinicalTimepoint','CellPopulation'))
+dataUse1 <- dataUse[complete.cases(dataUse), ]
+dataUse2 <- dataUse1[dataUse1$CellPopulation == "Tumor Cell", ]
+FAKObject.2 <- subset(FAKObject.1, cells = dataUse2$cell_id)
+
+
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+BiocManager::install("glmGamPoi")
+# install sctransform from Github
+install.packages("sctransform")
+# invoke sctransform - requires Seurat>=4.1
+FAKObject.2.list <- SplitObject(FAKObject.2, split.by = "ClinicalTimepoint")
+TN <- FAKObject.2.list[["Treatment Naive"]]
+RD <- FAKObject.2.list[["Residual Disease"]]
+AR <- FAKObject.2.list[["Acquired Resistance"]]
+# normalize and run dimensionality reduction on control dataset
+TN <- SCTransform(TN, vst.flavor = "v2", verbose = FALSE) %>%
+    RunPCA(npcs = 30, verbose = FALSE) %>%
+    RunUMAP(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindNeighbors(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindClusters(resolution = 0.7, verbose = FALSE)
+RD <- SCTransform(RD, vst.flavor = "v2", verbose = FALSE) %>%
+    RunPCA(npcs = 30, verbose = FALSE) %>%
+    RunUMAP(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindNeighbors(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindClusters(resolution = 0.7, verbose = FALSE)
+AR <- SCTransform(AR, vst.flavor = "v2", verbose = FALSE) %>%
+    RunPCA(npcs = 30, verbose = FALSE) %>%
+    RunUMAP(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindNeighbors(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindClusters(resolution = 0.7, verbose = FALSE)
+p1 <- DimPlot(TN, label = T, repel = T) + ggtitle("Unsupervised clustering: TN")
+p2 <- DimPlot(RD, label = T, repel = T) + ggtitle("Unsupervised clustering: RD")
+p3 <- DimPlot(AR, label = T, repel = T) + ggtitle("Unsupervised clustering: AR")
+#p2 <- DimPlot(TN, label = T, repel = T, group.by = "patient_id") + ggtitle("Patient ID: TN")
+
+p1 | p2 | p3
+
+
+
+
+FAKObject.2.list <- list(TN = TN, RD = RD, AR = AR)
+
+features <- SelectIntegrationFeatures(object.list = FAKObject.2.list, nfeatures = 2000)
+FAKObject.2.list <- PrepSCTIntegration(object.list = FAKObject.2.list, anchor.features = features)
+
+use.anchors <- FindIntegrationAnchors(object.list = FAKObject.2.list, normalization.method = "SCT",
+    anchor.features = features)
+
+use.combined.sct <- IntegrateData(anchorset = use.anchors, normalization.method = "SCT")
+
+use.combined.sct <- RunPCA(use.combined.sct, verbose = FALSE)
+use.combined.sct <- RunUMAP(use.combined.sct, reduction = "pca", dims = 1:30, verbose = FALSE)
+use.combined.sct <- FindNeighbors(use.combined.sct, reduction = "pca", dims = 1:30)
+use.combined.sct <- FindClusters(use.combined.sct, resolution = 0.3)
+
+p13<- DimPlot(use.combined.sct, reduction = "umap", split.by = "ClinicalTimepoint")
+
+p14 <- DimPlot(use.combined.sct, reduction = "umap", group.by = "ClinicalTimepoint")
+p15 <- DimPlot(use.combined.sct, reduction = "umap", group.by ="integrated_snn_res.0.3",label = F,
+    repel = TRUE)
+p16 <- DimPlot(use.combined.sct, reduction = "umap", group.by = "patient_id", label = F,
+    repel = TRUE)
+p17 <- DimPlot(use.combined.sct, reduction = "umap", group.by = "BiopsyStage", label = F,
+    repel = TRUE)
+((p15 / p14 + plot_layout(guides = 'auto')) | (p16 / p17 + plot_layout(guides = 'auto')))
+
+use.combined.sct$cellpop.timepoint <- paste(use.combined.sct$CellPopulation, use.combined.sct$ClinicalTimepoint, use.combined.sct$BiopsyStage,
+    sep = "_")
+Idents(use.combined.sct) <- "cellpop.timepoint"
+table(use.combined.sct$cellpop.timepoint)
+use.combined.sct <- PrepSCTFindMarkers(use.combined.sct)
+#Found 3 SCT models. Recorrecting SCT counts using minimum median counts: 1017220
+
+Primary.TN.RD.Response <- FindMarkers(use.combined.sct, assay = "SCT", ident.1 = "Tumor Cell_Residual Disease_Primary", ident.2 = "Tumor Cell_Treatment Naive_Primary",
+    verbose = T)
+
+Primary.AR.RD.Response <- FindMarkers(use.combined.sct, assay = "SCT", ident.1 = "Tumor Cell_Residual Disease_Primary", ident.2 = "Tumor Cell_Acquired Resistance_Primary",
+    verbose = T)
+
+head(Primary.TN.RD.Response, n = 15)
+head(Primary.AR.RD.Response, n = 15)
+~~~
+#Idents(immune.combined.sct) <- "seurat_annotations"
+  #default currently "integrated"
+DefaultAssay(use.combined.sct) <-"SCT"
+FeaturePlot(use.combined.sct, features = c("SUSD2", "MS4A15", "FLRT3"), split.by = "cellpop.timepoint", max.cutoff = 3,
+    cols = c("grey", "red"))
+p1<-VlnPlot(use.combined.sct, features = c("NEDD9", "PTPRE", "PTRF", "NOV","MAP1B"), split.by = "cellpop.timepoint", pt.size = 0, combine = T)
+wrap_plots(plots = plots, ncol = 1)
+p1
+
+FAK_features_comb <- list(c(
+  'NEDD9',
+  'PTPRE',
+  'MAP1B',
+  'PTRF',
+  'NOV'
+  )) #these are the final chosen markers as indicated to be significantly differentially expressed
+
+use.combined.sct.modules <- AddModuleScore(
+  object = use.combined.sct,
+  features = c(FAK_features_comb),
+  ctrl = 30,
+  name = c('FAK_markers_comb')
+)
+
+range(use.combined.sct.modules@meta.data$FAK_markers_comb1) # -1.882138  3.745481
+# Plot scores
+# Ridge plots - from ggridges. Visualize single cell expression distributions in each cluster
+
+
+identities <- c("Tumor Cell_Treatment Naive_Primary","Tumor Cell_Treatment Naive_Metastatic","Tumor Cell_Residual Disease_Primary","Tumor Cell_Residual Disease_Metastatic" ,"Tumor Cell_Acquired Resistance_Primary","Tumor Cell_Acquired Resistance_Metastatic")
+colours = c("#D55E00", "#754927","grey39","#363535","#0072B2","#1E4F6B")
+colours2 = c("grey39","gray79","darkgoldenrod1","darkgoldenrod","darkmagenta","darkorchid1")
+#define custom color scale
+names(colours) <- levels(identities)
+custom_colours <- scale_colour_manual(name = "Tumor Cell State", values = colours)
+
+Idents(use.combined.sct.modules) <- factor(Idents(use.combined.sct.modules), levels= identities)
+
+p2 <- VlnPlot(use.combined.sct.modules, features = "FAK_markers_comb1", split.by = 'cellpop.timepoint',idents = c(identities[1],identities[3]), cols = c(colours2[3],colours2[1]))+
+ggtitle("FAK Signature Expression") +
+  theme(legend.position = 'none')+
+  ylab("")+
+  xlab("Primary Lung Tumor")+
+  custom_theme+
+  theme(axis.text.x=element_text(size=30), axis.text = element_text(size = 30), axis.title.x = element_text(size = 30), plot.title = element_text(size = 30))+
+   geom_signif(comparisons = list(c("Tumor Cell_Residual Disease_Primary", "Tumor Cell_Treatment Naive_Primary")),map_signif_level=TRUE, y_position = 3.6, annotations = '****', textsize = 10)+
+  scale_x_discrete(limits=c("Tumor Cell_Treatment Naive_Primary", "Tumor Cell_Residual Disease_Primary"),
+        labels=c("Tumor Cell_Treatment Naive_Primary" = "TN", "Tumor Cell_Residual Disease_Primary" ="RD"))+
+  scale_y_continuous(limits = c(-2,4.5))
+
+
+finaldata <- FetchData(use.combined.sct.modules, c('nCount_RNA', 'nFeature_RNA', 'patient_id','cell_id', 'ClinicalTimepoint','BiopsySite', 'CellPopulation_State', 'cellpop.timepoint','FAK_markers_comb1'))
+test <- kruskal.test(x = finaldata$FAK_markers_comb1, g = finaldata$cellpop.timepoint)
+Kruskal_Wallis_ChiSq_Statistic <- test$statistic
+Kruskal_Wallis_pVal <- test$p.value
+
+#Dunn's test for pairwise multiple comparisons of the ranked data. The mean rank of the different groups is compared. Used for post-hoc test following Kruskal-Wallis test.
+
+final_stats<- dunn_test(finaldata, FAK_markers_comb1~cellpop.timepoint, p.adjust.method = "bonferroni", detailed = TRUE)
+SignificanceTable <- data.frame(final_stats, Kruskal_Wallis_ChiSq_Statistic,Kruskal_Wallis_pVal)
+```

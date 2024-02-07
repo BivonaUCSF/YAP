@@ -1,0 +1,671 @@
+---
+title: "FAKYAP_SingleCellDataGeneSetAnalyses"
+author: "Lauren Cech"
+date: "2/2/2024"
+output: html_document
+---
+---
+# Part 1: FAK
+
+set up
+```{r}
+library(Seurat)
+library(sctransform)
+library(ggplot2)
+library(tidyverse)
+library(devtools)
+library(ggsignif)
+library(ggpubr)
+library(plotly)
+library(ggridges)
+library(reshape)
+library(gridExtra)
+library(ggrepel)
+library(ggExtra)
+library(RColorBrewer)
+library(rstatix)
+library(extrafont)
+library(patchwork)
+#fonts()
+library(scales)
+library(dplyr)
+library(reshape2)
+#pdf("plot_CD74_survival.pdf", family="Luminari", width=4.5, height=4.5)
+#dev.off
+custom_theme <- theme(
+  plot.title = element_text(size=20, hjust = 0.5), 
+  legend.key.size = unit(0.7, "cm"), 
+  legend.text = element_text(size = 18))
+```
+#plug in EDD and load data
+```{r}
+## Download Data
+```{r}
+#See https://github.com/czbiohub/scell_lung_adenocarcinoma for instructions on how to download data
+#Make a directory called "scell_lung_adenocarcinoma" in a location of your choice
+  #make a subdirectory called "gene_lists"
+  #make a subdirectory called "Data_input"
+  #make a subdirectory called "objects"
+```
+## Set Up Relative Directory
+```{r}
+# Relative directory for loading files from the project
+
+dir <- "INSERT/YOUR/PATH/HERE/TO/scell_lung_adenocarcinoma/"
+```
+## Load All Objects and Files
+```{r}
+# Seurat Single Cell File
+
+load(file = paste(dir, "Data_input/objects/NI04_tumor_seurat_object.RData", sep = ""))
+
+load("/LOCATION/OF/IM06_ALL_cells_Immune_AND_nonImmune_annotations-016.RData")
+tiss_subset <- UpdateSeuratObject(tiss_subset)
+table(tiss_subset@meta.data$Final_annotation)
+table(tiss_subset@meta.data$analysis)
+
+clinical_RD_cellsdf <- filter(tiss_subset@meta.data, analysis == "grouped_pr")
+
+clinical_PD_cellsdf <- filter(tiss_subset@meta.data, analysis == "grouped_pd")
+
+clinical_TN_cellsdf <- filter(tiss_subset@meta.data, analysis == "naive")
+
+FAKObject <- subset(tiss_subset, cells = c(clinical_PD_cellsdf$cell_id, clinical_RD_cellsdf$cell_id, clinical_TN_cellsdf$cell_id))
+FAKObject <-SetIdent(FAKObject,  value = "analysis")
+FAKObject<- FindVariableFeatures(FAKObject, selection.method = "vst", nfeatures = 2000)
+FAKObject<- ScaleData(FAKObject)
+FAKObject <- RunPCA(FAKObject)
+ElbowPlot(FAKObject, ndims =50)
+FAKObject <- RunUMAP(FAKObject, dims = 1:30)
+FAKObject <- RunTSNE(FAKObject, dims = 1:30)
+DimPlot(FAKObject, reduction = "umap")
+DimPlot(FAKObject, reduction = "tsne", group.by = 'analysis')
+
+DimPlot(
+  object = FAKObject, 
+  group.by = 'patient_id', 
+  label = F, pt.size = 0.2, 
+  reduction = "umap", repel = T)
+
+DimPlot(
+  object = FAKObject, 
+  group.by = 'biopsy_site', 
+  label = F, pt.size = 0.2, 
+  reduction = "umap", repel = T)
+#note there are two lung annotations ("lung" and "Lung")
+```
+
+``` {r}
+table(FAKObject@meta.data$treatment) #vs
+table(FAKObject@meta.data$treatmentadjust)
+table(FAKObject@meta.data$ClinicalTimepoint)
+#Acquired Resistance    Residual Disease     Treatment Naive 
+#              10200                6005                7056
+#table(FAKObject@meta.data$Final_annotation)
+table(FAKObject@meta.data$biopsy_site) #vs
+table(FAKObject@meta.data$BiopsySite)
+#Adrenal      Brain      Liver       Lung Lymph Node     Pleura 
+#    774         75       2683      11312       5156       3261 
+#FAKObject@meta.data$treatmentadjust <- FAKObject@meta.data$treatment
+table(FAKObject@meta.data$primary_or_metastaic, FAKObject@meta.data$BiopsySite)
+table(FAKObject@meta.data$BiopsySite, FAKObject@meta.data$BiopsyStage)
+table(FAKObject@meta.data$ClinicalTimepoint, FAKObject@meta.data$BiopsyStage)
+
+
+library(tibble)
+
+FAKObject@meta.data <- FAKObject@meta.data %>% mutate(treatmentadjust =
+                     case_when(treatment == "alectinib" ~ "Alectinib [ALKi]", 
+                               treatment == "erlotinib" ~ "Erlotinib [EGFRi]",
+                               treatment == "ceritinib/trametinib" ~ "Combinatorial",
+                               treatment == "erlotinib/gemcitabine" ~ "Combinatorial",
+                               treatment == "dabrafenib/trametinib" ~ "Combinatorial",
+                               treatment == "None" ~ "None",
+                               treatment == "osimertinib" ~ "Osimertinib [EGFRi]",
+                               treatment == "crizotinib" ~ "Crizotinib [ALKi; ROS1i]",
+                               treatment == "followed elsewhere" ~ "Left Treatment",
+                               treatment == "radiation" ~ "Radiation",
+                               treatment == "lorlatinib" ~ "Lorlatinib [ALKi; ROS1i]",
+                               treatment == "trametinib" ~ "Trametinib [MEKi]"))
+
+FAKObject@meta.data <- FAKObject@meta.data %>% mutate(ClinicalTimepoint =
+                     case_when(analysis == "naive" ~ "Treatment Naive", 
+                               analysis == "grouped_pr" ~ "Residual Disease",
+                               analysis == "grouped_pd" ~ "Acquired Resistance"))
+
+FAKObject@meta.data <- FAKObject@meta.data %>% mutate(BiopsySite =
+                     case_when(biopsy_site == "Adrenal" ~ "Adrenal", 
+                               biopsy_site == "Brain" ~ "Brain",
+                               biopsy_site == "Liver" ~ "Liver",
+                               biopsy_site == "LN" ~ "Lymph Node",
+                               biopsy_site == "lung" ~ "Lung",
+                               biopsy_site == "Lung" ~ "Lung",
+                               biopsy_site == "Pleura" ~ "Pleura"))
+
+FAKObject@meta.data <- FAKObject@meta.data %>% mutate(BiopsyStage =
+                     case_when(BiopsySite == "Adrenal" ~ "Metastatic", 
+                               BiopsySite == "Brain" ~ "Metastatic",
+                               BiopsySite == "Liver" ~ "Metastatic",
+                               BiopsySite == "Lymph Node" ~ "Metastatic",
+                               BiopsySite == "Lung" ~ "Primary",
+                               BiopsySite == "Pleura" ~ "Metastatic")) #need to check for NAs
+
+#how many are lung metastases?
+table(FAKObject@meta.data$Final_annotation)
+
+
+FAKObject@meta.data <- FAKObject@meta.data %>% mutate(CellPopulation =
+                     case_when(Final_annotation == "alveolar type 1 cell" ~ "AT1 Cell", 
+                               Final_annotation == "alveolar type 2 cell" ~ "AT2 Cell",
+                               Final_annotation == "B-cells-M" ~ "Memory B-Cell",
+                               Final_annotation == "B-cells-PB" ~ "Plasmablast B-Cell",
+                               Final_annotation == "basal cell" ~ "Basal Cell",
+                               Final_annotation == "ciliated cell" ~ "Ciliated Cell",
+                               Final_annotation == "club cell" ~ "Club Cell",
+                               Final_annotation == "Dendritic" ~ "Dendritic Cell",
+                               Final_annotation == "endothelial" ~ "Endothelial Cell",
+                               Final_annotation == "fibroblast" ~ "Fibroblast",
+                               Final_annotation == "hepatocyte" ~ "Hepatocyte",
+                               Final_annotation == "Mast-cells" ~ "Mast Cell",
+                               Final_annotation == "melanocytes" ~ "Melanocyte",
+                               Final_annotation == "MF-Monocytes" ~ "Macrophage-Monocyte",
+                               Final_annotation == "neuro.e cell" ~ "Neuroendocrine Cell",
+                               Final_annotation == "Neutrophils" ~ "Neutrophil",
+                               Final_annotation == "pDCs" ~ "Plasmacytoid Dendritic Cell",
+                               Final_annotation == "T-cells" ~ "T-Cell",
+                               Final_annotation == "tumor" ~ "Tumor Cell",
+                               Final_annotation == "Unknown" ~ "Unknown Cell 1",
+                               Final_annotation == "unknown stroma1" ~ "Unknown Stromal Cell 1",
+                               Final_annotation == "unknown stroma2" ~ "Unknown Stromal Cell 2",
+                               Final_annotation == "unknown stroma3" ~ "Unknown Stromal Cell 3",
+                               Final_annotation == "unknown stroma4" ~ "Unknown Stromal Cell 4",
+                               Final_annotation == "unknown stroma5" ~ "Unknown Stromal Cell 5",
+                               Final_annotation == "ionocyte" ~ "Ionocyte"))
+
+FAKObject@meta.data <- FAKObject@meta.data %>% mutate(CellPopulation_State = paste(CellPopulation, ClinicalTimepoint, sep = ' '))
+
+table(FAKObject@meta.data$CellPopulation_State)
+
+
+
+
+
+
+
+p1 <- DimPlot(
+  object = FAKObject, 
+  group.by = 'ClinicalTimepoint', 
+  label = F, 
+  pt.size = 0.2, 
+  reduction = "umap", cols = c("#000000", "#756671"," #0072B2"), repel = T) +
+  ggtitle("CLINICAL TIMEPOINT") +
+  xlab("UMAP 1") +
+  ylab("UMAP 2") +
+  custom_theme
+
+p2 <- DimPlot(
+  object = FAKObject, 
+  group.by = 'treatmentadjust', 
+  label = F, pt.size = 0.2, 
+  reduction = "umap", repel = T,
+  cols = c("#40004B","#D55E00","#C2A5Cf"," #0072B2","#D9F0D3","#A6DBA0","#7FBC41","#8B7F47","#276419","#252525","#000000")) + 
+  ggtitle("THERAPEUTIC APPROACH") +
+  ylab("UMAP 2") +
+  xlab("UMAP 1") +
+  custom_theme
+
+p3 <- DimPlot(
+  object = FAKObject, 
+  group.by = 'BiopsyStage', 
+  pt.size = 0.2, 
+  reduction = "umap") + 
+  ggtitle("ORIGIN") +
+  ylab("UMAP 2") +
+  xlab("UMAP 1") +
+  custom_theme
+
+# Visualize plots.
+((p1 / p2 + plot_layout(guides = 'auto')) | p3 )
+
+```
+#assign unknown clusters
+```{r}
+table(FAKObject@meta.data$CellPopulation_State)
+
+FAK_SRC_Signature <- c("PTK2","NEDD9","PEAK1","AFAP1L2","DOCK1","FYN","GIT2","VCL","EPHB1","TNK2","IL31RA","ACTN1","BCAR3","PTPRE","ABL1")
+FAK_Signature <- c("PTK2","NEDD9","PEAK1","AFAP1L2","DOCK1","FYN","GIT2","VCL","EPHB1","TNK2","IL31RA","ACTN1","BCAR3","PTPRE","ABL1","CDK1","MAP1B","PIK3R2","CAVIN1","MYH9","NOV")
+# Get top 20 genes enriched in tumor cells
+FAKObject.1 <-SetIdent(FAKObject,  value = "CellPopulation_State")
+#tumor_enriched <- FindMarkers(FAKObject.1, ident.1 = "tumor", verbose = FALSE) %>%
+#  arrange(-avg_log2FC) %>%
+#  rownames_to_column(var = "gene") %>%
+#  pull(gene) %>% 
+#  .[1:20]
+#this is all top tumor markers; too much memory...
+
+#ibroblast markers
+load("/Volumes/My Passport for Mac/Rdata/FAKObject.1.rds")
+
+caf_features <- list(c(
+  'TGFB1',
+  'ACTA2',
+  'SMAD1', #maintenance of CAFs
+  'FAP', 
+  'MMP2',#remodel ECM
+  'CAV1',
+  'CXCL14',
+  'POSTN' #angiogenesis and survival
+))
+
+FAK_SRC_features <- list(c(
+  'PTK2',
+  'NEDD9',
+  'PEAK1',
+  'AFAP1L2',
+  'DOCK1',
+  'FYN',
+  'GIT2',
+  'VCL',
+  'EPHB1',
+  'TNK2',
+  'IL31RA',
+  'ACTN1',
+  'BCAR3',
+  'PTPRE',
+  'ABL1'
+  ))
+
+FAK_features <- list(c(
+  'PTK2',
+  'NEDD9',
+  'PEAK1',
+  'AFAP1L2',
+  'DOCK1',
+  'FYN',
+  'GIT2',
+  'VCL',
+  'EPHB1',
+  'TNK2',
+  'IL31RA',
+  'ACTN1',
+  'BCAR3',
+  'PTPRE',
+  'ABL1',
+  'CDK1',
+  'MAP1B',
+  'PIK3R2',
+  'PTRF',
+  'MYH9',
+  'NOV'
+  ))
+FAKObject.1 <- AddModuleScore(
+  object = FAKObject.1,
+  features = c(caf_features, FAK_SRC_features, FAK_features),
+  ctrl = 30,
+  name = c('CAF_markers', 'FAK_SRC_markers', 'FAK_markers')
+)
+
+
+# Plot scores
+# Ridge plots - from ggridges. Visualize single cell expression distributions in each cluster
+
+unique(FAKObject.1@meta.data$CellPopulation_State)
+#FAKObject.1@meta.data$CAF_markers1
+#FAKObject.1@meta.data$FAK_SRC_markers2
+#FAKObject.1@meta.data$FAK_markers3
+
+identities <- c("Fibroblast Treatment Naive","Fibroblast Residual Disease","Fibroblast Acquired Resistance","Tumor Cell Residual Disease" ,"Tumor Cell Acquired Resistance","Tumor Cell Treatment Naive","AT1 Cell Treatment Naive","AT1 Cell Residual Disease","AT2 Cell Treatment Naive","AT2 Cell Residual Disease","AT1 Cell Acquired Resistance","AT2 Cell Acquired Resistance")
+p8<- RidgePlot(FAKObject.1, features = "CAF_markers1", idents = identities, sort='increasing')+
+ggtitle("CAF Marker Expression") +
+  theme(legend.position = 'none')+
+  ylab("")+
+  xlab("")+
+  #genes?
+  custom_theme
+
+p10<- RidgePlot(FAKObject.1, features = "FAK_SRC_markers2", idents = identities, sort='increasing')+
+ggtitle("FAK_SRC Marker Expression") +
+  theme(legend.position = 'none')+
+  ylab("")+
+  xlab("")+
+  #genes?
+  custom_theme
+
+p11<- RidgePlot(FAKObject.1, features = "FAK_markers3", idents = identities, sort='increasing')+
+ggtitle("FAK Marker Expression") +
+  theme(legend.position = 'none')+
+  ylab("")+
+  xlab("")+
+  #genes?
+  custom_theme
+
+p12 <- VlnPlot(FAKObject.1, features = "FAK_SRC_markers2", split.by = 'ClinicalTimepoint',idents = c(identities[9],identities[13]))
+
+
+
+#p9 <- FeatureScatter(FAKObject.1, feature1 = "CD74_axis21", feature2 = "CAF_markers1",cells = c(dataUse3$cell_id,dataUse2$cell_id), cols = c("#D55E00","grey69"))+
+#  ggtitle("Pearson Correlation: -0.44") +
+#  xlab("CD74 Axis")+
+#  ylab("CAF Marker Expression")+
+  #genes?
+#  custom_theme
+# Combine two plots
+
+(p8 | p10 |p11 + plot_layout(guides = 'auto'))
+
+(p12 + plot_layout(guides = 'auto'))
+
+table(FAKObject@meta.data$Final_annotation,FAKObject@meta.data$BiopsyStage,FAKObject@meta.data$BiopsySite)
+table(FAKObject@meta.data$Final_annotation,FAKObject@meta.data$biopsy_site)
+table(FAKObject@meta.data$biopsy_site,FAKObject@meta.data$patient_id)
+
+
+```
+
+```{r}
+
+```
+setwd("/Users/lcech/Desktop/Keystone/UCSF/Collaborations")
+pdf("plot_FAKSignatureExpressionSummary_CellPopulationComparison.pdf", family="Arial", width=12, height=4)
+(p10 | p11 + plot_layout(guides = 'auto'))
+dev.off()
+setwd("/Users/lcech/Desktop/Keystone/UCSF/Collaborations/YAP/Scripts")
+
+```{r}
+table(FAKObject.1@meta.data$CellPopulation)
+
+p4<-VlnPlot(
+  object = FAKObject.1, 
+  features = "FAK_SRC_markers2", 
+  idents = c("Tumor Cell Acquired Resistance","Tumor Cell Residual Disease","Tumor Cell Treatment Naive"), 
+  pt.size = 0,
+  split.by = "ClinicalTimepoint",
+  cols = c("#D55E00","grey39","#0072B2")) +
+  ggtitle("Tumor Cell FAK-SRC Signature") +
+  theme(legend.position = 'none')+
+  custom_theme+
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank())
+
+p5<-VlnPlot(
+  object = FAKObject.1, 
+  features = "FAK_markers3", 
+  idents = c("Tumor Cell Acquired Resistance","Tumor Cell Residual Disease","Tumor Cell Treatment Naive"), 
+  pt.size = 0,
+  split.by = "ClinicalTimepoint",
+  cols = c("#D55E00","grey39","#0072B2")) +
+  ggtitle("Tumor Cell FAK Signature") +
+  theme(legend.position = 'none')+
+  custom_theme +
+  theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank())
+
+p6 <- VlnPlot(
+  object = FAKObject.1, 
+  features = "FAK_SRC_markers2", 
+  idents = c("Tumor Cell Acquired Resistance","Tumor Cell Residual Disease","Tumor Cell Treatment Naive"), 
+  pt.size = 0,
+  sort = T, 
+  group.by = "BiopsyStage",
+  split.by = "ClinicalTimepoint", 
+  cols = c("#D55E00","grey39","#0072B2")) +
+  ggtitle("Tumor Cell FAK-SRC Signature") +
+  theme(legend.position = 'none')+
+  custom_theme +
+  theme(axis.title.x=element_blank())
+
+p7 <- VlnPlot(
+  object = FAKObject.1, 
+  features = "FAK_markers3", 
+  idents = c("Tumor Cell Acquired Resistance","Tumor Cell Residual Disease","Tumor Cell Treatment Naive"), 
+  pt.size = 0,
+  group.by = "BiopsyStage",
+  split.by = "ClinicalTimepoint", 
+  cols = c("#D55E00","grey39","#0072B2")) +
+  ggtitle("Tumor Cell FAK Signature") +
+  custom_theme +
+  theme(axis.title.x=element_blank())
+
+
+((p4 / p5 + plot_layout(guides = 'auto')) | (p6 / p7 + plot_layout(guides = 'auto')))
+
+dataUse <- FetchData(FAKObject.1, vars = c('cell_id', 'BiopsyStage','ClinicalTimepoint','CellPopulation'))
+dataUse1 <- dataUse[complete.cases(dataUse), ]
+dataUse2 <- dataUse1[dataUse1$CellPopulation == "Tumor Cell", ]
+FAKObject.2 <- subset(FAKObject.1, cells = dataUse2$cell_id)
+table(FAKObject.2@meta.data$BiopsyStage)
+setwd("/Volumes/My Passport for Mac/Rdata/")
+saveRDS(FAKObject.2, file = "FAKObject.2.rds")
+saveRDS(FAKObject.1, file = "FAKObject.1.rds")
+
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+BiocManager::install("glmGamPoi")
+# install sctransform from Github
+install.packages("sctransform")
+# invoke sctransform - requires Seurat>=4.1
+FAKObject.2.list <- SplitObject(FAKObject.2, split.by = "ClinicalTimepoint")
+TN <- FAKObject.2.list[["Treatment Naive"]]
+RD <- FAKObject.2.list[["Residual Disease"]]
+AR <- FAKObject.2.list[["Acquired Resistance"]]
+# normalize and run dimensionality reduction on control dataset
+TN <- SCTransform(TN, vst.flavor = "v2", verbose = FALSE) %>%
+    RunPCA(npcs = 30, verbose = FALSE) %>%
+    RunUMAP(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindNeighbors(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindClusters(resolution = 0.7, verbose = FALSE)
+RD <- SCTransform(RD, vst.flavor = "v2", verbose = FALSE) %>%
+    RunPCA(npcs = 30, verbose = FALSE) %>%
+    RunUMAP(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindNeighbors(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindClusters(resolution = 0.7, verbose = FALSE)
+AR <- SCTransform(AR, vst.flavor = "v2", verbose = FALSE) %>%
+    RunPCA(npcs = 30, verbose = FALSE) %>%
+    RunUMAP(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindNeighbors(reduction = "pca", dims = 1:30, verbose = FALSE) %>%
+    FindClusters(resolution = 0.7, verbose = FALSE)
+p1 <- DimPlot(TN, label = T, repel = T) + ggtitle("Unsupervised clustering: TN")
+p2 <- DimPlot(RD, label = T, repel = T) + ggtitle("Unsupervised clustering: RD")
+p3 <- DimPlot(AR, label = T, repel = T) + ggtitle("Unsupervised clustering: AR")
+#p2 <- DimPlot(TN, label = T, repel = T, group.by = "patient_id") + ggtitle("Patient ID: TN")
+
+p1 | p2 | p3
+
+
+
+
+FAKObject.2.list <- list(TN = TN, RD = RD, AR = AR)
+
+features <- SelectIntegrationFeatures(object.list = FAKObject.2.list, nfeatures = 2000)
+FAKObject.2.list <- PrepSCTIntegration(object.list = FAKObject.2.list, anchor.features = features)
+
+
+use.anchors <- FindIntegrationAnchors(object.list = FAKObject.2.list, normalization.method = "SCT",
+    anchor.features = features)
+save.image("/Volumes/My Passport for Mac/Rdata/2023_04_24_FAKanalysisSCT.RData")
+
+use.combined.sct <- IntegrateData(anchorset = use.anchors, normalization.method = "SCT")
+#save.image("/Volumes/My Passport for Mac/Rdata/2023_04_24_FAKanalysisSCT.RData")
+save(use.combined.sct, file = "/Volumes/My Passport for Mac/RObjects/SCTransformFAKSignatureTumor.RData")
+
+use.combined.sct <- RunPCA(use.combined.sct, verbose = FALSE)
+use.combined.sct <- RunUMAP(use.combined.sct, reduction = "pca", dims = 1:30, verbose = FALSE)
+use.combined.sct <- FindNeighbors(use.combined.sct, reduction = "pca", dims = 1:30)
+use.combined.sct <- FindClusters(use.combined.sct, resolution = 0.3)
+save(use.combined.sct, file = "/Volumes/My Passport for Mac/RObjects/SCTransformFAKSignatureTumor_IntegratedAnalysis.RData")
+#load("/Volumes/My Passport for Mac/RObjects/SCTransformFAKSignatureTumor_IntegratedAnalysis.RData")
+
+p13<- DimPlot(use.combined.sct, reduction = "umap", split.by = "ClinicalTimepoint")
+
+p14 <- DimPlot(use.combined.sct, reduction = "umap", group.by = "ClinicalTimepoint")
+p15 <- DimPlot(use.combined.sct, reduction = "umap", group.by ="integrated_snn_res.0.3",label = F,
+    repel = TRUE)
+p16 <- DimPlot(use.combined.sct, reduction = "umap", group.by = "patient_id", label = F,
+    repel = TRUE)
+p17 <- DimPlot(use.combined.sct, reduction = "umap", group.by = "BiopsyStage", label = F,
+    repel = TRUE)
+((p15 / p14 + plot_layout(guides = 'auto')) | (p16 / p17 + plot_layout(guides = 'auto')))
+
+use.combined.sct$cellpop.timepoint <- paste(use.combined.sct$CellPopulation, use.combined.sct$ClinicalTimepoint, use.combined.sct$BiopsyStage,
+    sep = "_")
+Idents(use.combined.sct) <- "cellpop.timepoint"
+table(use.combined.sct$cellpop.timepoint)
+
+#Tumor Cell_Acquired Resistance_Metastatic    Tumor Cell_Acquired Resistance_Primary    Tumor Cell_Residual Disease_Metastatic 
+#                                     1972                                       137                                        32 
+#      Tumor Cell_Residual Disease_Primary     Tumor Cell_Treatment Naive_Metastatic        Tumor Cell_Treatment Naive_Primary 
+#                                     540                                       396                                       677
+use.combined.sct <- PrepSCTFindMarkers(use.combined.sct)
+#Found 3 SCT models. Recorrecting SCT counts using minimum median counts: 1017220
+save(use.combined.sct, file = "/Volumes/My Passport for Mac/RObjects/SCTransformFAKSignatureTumor_IntegratedAnalysis_prepSCT.RData")
+#load("/Volumes/My Passport for Mac/RObjects/SCTransformFAKSignatureTumor_IntegratedAnalysis_prepSCT.RData")
+
+Primary.TN.RD.Response <- FindMarkers(use.combined.sct, assay = "SCT", ident.1 = "Tumor Cell_Residual Disease_Primary", ident.2 = "Tumor Cell_Treatment Naive_Primary",
+    verbose = T)
+save(Primary.TN.RD.Response, file = "/Volumes/My Passport for Mac/RObjects/PrimaryTNRDResponse_DEGs.RData")
+
+Primary.AR.RD.Response <- FindMarkers(use.combined.sct, assay = "SCT", ident.1 = "Tumor Cell_Residual Disease_Primary", ident.2 = "Tumor Cell_Acquired Resistance_Primary",
+    verbose = T)
+save(Primary.AR.RD.Response, file = "/Volumes/My Passport for Mac/RObjects/PrimaryARRDResponse_DEGs.RData")
+
+head(Primary.TN.RD.Response, n = 15)
+head(Primary.AR.RD.Response, n = 15)
+~~~
+#Idents(immune.combined.sct) <- "seurat_annotations"
+  #default currently "integrated"
+DefaultAssay(use.combined.sct) <-"SCT"
+FeaturePlot(use.combined.sct, features = c("SUSD2", "MS4A15", "FLRT3"), split.by = "cellpop.timepoint", max.cutoff = 3,
+    cols = c("grey", "red"))
+p1<-VlnPlot(use.combined.sct, features = c("NEDD9", "PTPRE", "PTRF", "NOV","MAP1B"), split.by = "cellpop.timepoint", pt.size = 0, combine = T)
+wrap_plots(plots = plots, ncol = 1)
+p1
+#didnt work bc lost in residual transfer
+
+FAK_features_comb <- list(c(
+  'NEDD9',
+  'PTPRE',
+  'MAP1B',
+  'PTRF',
+  'NOV'
+  ))
+
+use.combined.sct.modules <- AddModuleScore(
+  object = use.combined.sct,
+  features = c(FAK_features_comb),
+  ctrl = 30,
+  name = c('FAK_markers_comb')
+)
+
+range(use.combined.sct.modules@meta.data$FAK_markers_comb1) # -1.882138  3.745481
+# Plot scores
+# Ridge plots - from ggridges. Visualize single cell expression distributions in each cluster
+
+
+identities <- c("Tumor Cell_Treatment Naive_Primary","Tumor Cell_Treatment Naive_Metastatic","Tumor Cell_Residual Disease_Primary","Tumor Cell_Residual Disease_Metastatic" ,"Tumor Cell_Acquired Resistance_Primary","Tumor Cell_Acquired Resistance_Metastatic")
+colours = c("#D55E00", "#754927","grey39","#363535","#0072B2","#1E4F6B")
+colours2 = c("grey39","gray79","darkgoldenrod1","darkgoldenrod","darkmagenta","darkorchid1")
+#define custom color scale
+names(colours) <- levels(identities)
+custom_colours <- scale_colour_manual(name = "Tumor Cell State", values = colours)
+
+Idents(use.combined.sct.modules) <- factor(Idents(use.combined.sct.modules), levels= identities)
+p4 <- VlnPlot(use.combined.sct.modules, features = "FAK_markers_comb1", split.by = 'cellpop.timepoint',idents = identities, cols = c(colours[2],colours[1],colours[4], colours[3],colours[6],colours[5]))+
+ggtitle("FAK Signature Expression") +
+  ylab("")+
+  xlab("All Tumor Types")+
+  custom_theme+
+  theme(axis.text.x=element_blank(), axis.text = element_text(size = 30), axis.title.x = element_text(size = 30), plot.title = element_text(size = 30))+
+  geom_signif(comparisons = list(c("Tumor Cell_Acquired Resistance_Primary", "Tumor Cell_Acquired Resistance_Metastatic")), map_signif_level=TRUE, y_position = 4.2,annotations = '****', textsize = 10)+
+  geom_signif(comparisons = list(c("Tumor Cell_Treatment Naive_Metastatic", "Tumor Cell_Treatment Naive_Primary")), map_signif_level=TRUE, y_position = 3.6, annotations = '****', textsize = 10)+
+  geom_signif(comparisons = list(c("Tumor Cell_Residual Disease_Primary", "Tumor Cell_Residual Disease_Metastatic")),map_signif_level=TRUE, y_position = 3.9, annotations = '*', textsize = 10)+
+  scale_x_discrete(limits=c("Tumor Cell_Treatment Naive_Primary","Tumor Cell_Treatment Naive_Metastatic", "Tumor Cell_Residual Disease_Primary","Tumor Cell_Residual Disease_Metastatic", "Tumor Cell_Acquired Resistance_Primary","Tumor Cell_Acquired Resistance_Metastatic"))+
+  scale_y_continuous(limits = c(-2,4.5))
+
+p2 <- VlnPlot(use.combined.sct.modules, features = "FAK_markers_comb1", split.by = 'cellpop.timepoint',idents = c(identities[1],identities[3],identities[5]), cols = c(colours[1],colours[3], colours[5]))+
+ggtitle("FAK Signature Expression") +
+  theme(legend.position = 'none')+
+  ylab("")+
+  xlab("Primary Lung Tumor")+
+  custom_theme+
+  theme(axis.text.x=element_blank(), axis.text = element_text(size = 30), axis.title.x = element_text(size = 30), plot.title = element_text(size = 30))+
+  geom_signif(comparisons = list(c("Tumor Cell_Acquired Resistance_Primary", "Tumor Cell_Residual Disease_Primary")), map_signif_level=TRUE, y_position = 3.9,annotations = '****', textsize = 10)+
+  geom_signif(comparisons = list(c("Tumor Cell_Acquired Resistance_Primary", "Tumor Cell_Treatment Naive_Primary")), map_signif_level=TRUE, y_position = 4.2, annotations = '****', textsize = 10)+
+  geom_signif(comparisons = list(c("Tumor Cell_Residual Disease_Primary", "Tumor Cell_Treatment Naive_Primary")),map_signif_level=TRUE, y_position = 3.6, annotations = '****', textsize = 10)+
+  scale_x_discrete(limits=c("Tumor Cell_Treatment Naive_Primary", "Tumor Cell_Residual Disease_Primary", "Tumor Cell_Acquired Resistance_Primary"))+
+  scale_y_continuous(limits = c(-2,4.5))
+
+p3 <- VlnPlot(use.combined.sct.modules, features = "FAK_markers_comb1", split.by = 'cellpop.timepoint',idents = c(identities[2],identities[4],identities[6]),cols = c(colours[2],colours[4], colours[6]))+
+ggtitle("FAK Signature Expression") +
+  theme(legend.position = 'none')+
+  ylab("")+
+  xlab("Metastases")+
+  custom_theme+
+  theme(axis.text.x=element_blank(), axis.text = element_text(size = 30), axis.title.x = element_text(size = 30), plot.title = element_text(size = 30))+
+  geom_signif(comparisons = list(c("Tumor Cell_Acquired Resistance_Metastatic", "Tumor Cell_Residual Disease_Metastatic")), map_signif_level=TRUE, y_position = 3.9,annotations = '***', textsize = 10)+
+  geom_signif(comparisons = list(c("Tumor Cell_Acquired Resistance_Metastatic", "Tumor Cell_Treatment Naive_Metastatic")), map_signif_level=TRUE, y_position = 4.2, annotations = '****', textsize = 10)+
+  scale_x_discrete(limits=c("Tumor Cell_Treatment Naive_Metastatic", "Tumor Cell_Residual Disease_Metastatic", "Tumor Cell_Acquired Resistance_Metastatic"))+
+  scale_y_continuous(limits = c(-2,4.5))
+
+(p2 | p3 |p4 + plot_layout(guides = 'auto'))
+
+finaldata <- FetchData(use.combined.sct.modules, c('nCount_RNA', 'nFeature_RNA', 'patient_id','cell_id', 'ClinicalTimepoint','BiopsySite', 'CellPopulation_State', 'cellpop.timepoint','FAK_markers_comb1'))
+test <- kruskal.test(x = finaldata$FAK_markers_comb1, g = finaldata$cellpop.timepoint)
+Kruskal_Wallis_ChiSq_Statistic <- test$statistic
+Kruskal_Wallis_pVal <- test$p.value
+
+#Dunn's test for pairwise multiple comparisons of the ranked data. The mean rank of the different groups is compared. Used for post-hoc test following Kruskal-Wallis test.
+
+final_stats<- dunn_test(finaldata, FAK_markers_comb1~cellpop.timepoint, p.adjust.method = "bonferroni", detailed = TRUE)
+SignificanceTable <- data.frame(final_stats, Kruskal_Wallis_ChiSq_Statistic,Kruskal_Wallis_pVal)
+```
+
+
+setwd("/Users/lcech/Desktop/Keystone/UCSF/Collaborations")
+pdf("plot_TumorCells_FAKSignature.pdf", family="Arial", width=26, height=10)
+(p2 | p3 |p4 + plot_layout(guides = 'auto'))
+dev.off()
+setwd("/Users/lcech/Desktop/Keystone/UCSF/Collaborations/YAP/Scripts")
+
+
+#need larger text and reorder bottom groups
+setwd("/Users/lcech/Desktop/Keystone/UCSF/Collaborations")
+pdf("plot_SCTransformIntegrated_TumorCellsFAKModuleDEGS.pdf", family="Arial", width=28, height=20)
+(p1 + plot_layout(guides = 'auto'))
+dev.off()
+setwd("/Users/lcech/Desktop/Keystone/UCSF/Collaborations/YAP/Scripts")
+
+
+setwd("/Users/lcech/Desktop/Keystone/UCSF/Collaborations")
+pdf("plot_SCTransformTumorDimensionalReductionSummary.pdf", family="Arial", width=12, height=4)
+(p13 + plot_layout(guides = 'auto'))
+dev.off()
+setwd("/Users/lcech/Desktop/Keystone/UCSF/Collaborations/YAP/Scripts")
+
+
+setwd("/Users/lcech/Desktop/Keystone/UCSF/Collaborations")
+pdf("plot_SCTransformTumorDimensionalReductionAssessRegression.pdf", family="Arial", width=12, height=8)
+((p15 / p14 + plot_layout(guides = 'auto')) | (p16 / p17 + plot_layout(guides = 'auto')))
+dev.off()
+setwd("/Users/lcech/Desktop/Keystone/UCSF/Collaborations/YAP/Scripts")
+
+
+
+2023_07_29 Final edition
+```{r}
+p2 <- VlnPlot(use.combined.sct.modules, features = "FAK_markers_comb1", split.by = 'cellpop.timepoint',idents = c(identities[1],identities[3]), cols = c(colours2[3],colours2[1]))+
+ggtitle("FAK Signature Expression") +
+  theme(legend.position = 'none')+
+  ylab("")+
+  xlab("Primary Lung Tumor")+
+  custom_theme+
+  theme(axis.text.x=element_text(size=30), axis.text = element_text(size = 30), axis.title.x = element_text(size = 30), plot.title = element_text(size = 30))+
+   geom_signif(comparisons = list(c("Tumor Cell_Residual Disease_Primary", "Tumor Cell_Treatment Naive_Primary")),map_signif_level=TRUE, y_position = 3.6, annotations = '****', textsize = 10)+
+  scale_x_discrete(limits=c("Tumor Cell_Treatment Naive_Primary", "Tumor Cell_Residual Disease_Primary"),
+        labels=c("Tumor Cell_Treatment Naive_Primary" = "TN", "Tumor Cell_Residual Disease_Primary" ="RD"))+
+  scale_y_continuous(limits = c(-2,4.5))
+
+
+```
+
+pdf("plot_TumorCells_FAKSignature.pdf", family="Arial", width=6.2, height=8)
+(p2 + plot_layout(guides = 'auto'))
+dev.off()

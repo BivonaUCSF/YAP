@@ -1,0 +1,353 @@
+---
+title: "permutation"
+author: "Lauren Cech"
+date: "2/2/2024"
+output: html_document
+---
+
+---
+title: "LAC_BL_004_Analysis_SingleCell_Permutation_EditsAndRevisions"
+author: "Lauren Cech"
+date: "1/14/2021"
+output: html_document
+---
+
+
+```{r}
+library(Seurat) #the following script uses version 3
+library(devtools) 
+#install_github("billyhw/GSALightning")
+library(GSALightning)
+library(plyr)
+library(ggplot2)
+library(tidyverse)
+library(gridExtra)
+library(devtools)
+library(ggsignif)
+library(ggpubr)
+library(plotly)
+library(ggridges)
+library(reshape)
+library(gridExtra)
+library(ggrepel)
+library(ggExtra)
+library(readxl)
+library(RColorBrewer)
+library(rstatix)
+library(Matrix)
+library(stringr)
+```
+
+# Gene Sets
+```{r}
+HyperactiveYAPUpregulatedGenes <- read_excel("/SUPP/TABLE/THREE/YAP5SA_UP.xlsx")
+#avail by request to corresp. author; sequencing data avail at PRJNA766057 and PRJNA591860.
+H358_RNAseq_PERSISTERvsDMSO_Sig_DGExp2339_logFC1.0_FDR0.05_Apr15_2020 <- read.delim("~/Downloads/H358_RNAseq_PERSISTERvsDMSO_Sig_DGExp2339_logFC1.0_FDR0.05_Apr15_2020.txt")
+H3122minus6_RNAseq_PERSISTERvsDMSO_Sig_DGExp1894_logFC1.0_FDR0.05_April15_2020 <- read.delim("~/Downloads/H3122minus6_RNAseq_PERSISTERvsDMSO_Sig_DGExp1894_logFC1.0_FDR0.05_April15_2020.txt")
+PC9_RNAseq_PERSISTERvsDMSO_Sig_DGExp2688_logFC1.0_FDR0.05_April15_2020 <- read.delim("~/Downloads/PC9_RNAseq_PERSISTERvsDMSO_Sig_DGExp2688_logFC1.0_FDR0.05_April15_2020.txt")
+
+#Get gene names only
+
+H358Genes_names <- H358_RNAseq_PERSISTERvsDMSO_Sig_DGExp2339_logFC1.0_FDR0.05_Apr15_2020[1]
+H3122Genes_names <- H3122minus6_RNAseq_PERSISTERvsDMSO_Sig_DGExp1894_logFC1.0_FDR0.05_April15_2020[1]
+PC9Genes_names <- PC9_RNAseq_PERSISTERvsDMSO_Sig_DGExp2688_logFC1.0_FDR0.05_April15_2020[1]
+HyperactiveYAPUpregulatedGenes_names <- HyperactiveYAPUpregulatedGenes[1]
+colnames(H358Genes_names) <- "Gene"
+colnames(H3122Genes_names) <- "Gene"
+colnames(PC9Genes_names) <- "Gene"
+colnames(HyperactiveYAPUpregulatedGenes_names) <- "Gene" 
+
+
+
+HUGS <- HyperactiveYAPUpregulatedGenes_names$Gene        #299
+H3122 <- H3122Genes_names$Gene                           #1894
+PC9 <- PC9Genes_names$Gene                               #2688
+H358 <- H358Genes_names$Gene                             #2339
+DEG_PR_CL <- Reduce(intersect, list(H358Genes_names$Gene, H3122Genes_names$Gene, PC9Genes_names$Gene))             # 343
+naive <- naive_DEGs$x                                    # 576
+PR <- grouped_pr_DEGs$x                                  # 254
+PD <- grouped_pd_DEGs$x                                  # 387
+
+#names:
+GeneSet1 <- HUGS
+GeneSet2 <- H3122
+GeneSet3 <- PC9
+GeneSet4 <- H358
+GeneSet5 <- DEG_PR_CL
+GeneSet6 <- PR
+GeneSet7 <- PD
+GeneSet8 <- naive
+
+GeneSetNames <- c("GeneSet1", "GeneSet2", "GeneSet3", "GeneSet4", "GeneSet5", "GeneSet6","GeneSet7", "GeneSet8")
+GeneSetDescription <- c("HyperactiveYapUpregulatedGenes", "H3122PersisterGenes", "PC9PersisterGenes", "H358PersisterGenes","AllPersisterCellLineSharedGenes","grouped_pr_DEGs", "grouped_pd_DEGs", "naive_DEGs")
+GeneSetOriginalSize <- c(299, 1894, 2688, 2339, 343, 254, 387, 576)
+PermutationGeneSetNamesKey <- data.frame(GeneSetNames, GeneSetDescription, GeneSetOriginalSize)
+```
+
+# Build base R matrix
+````{r}
+#1
+set.seed(0)
+nrows <- 1L
+ncols <- 299L
+vals <- sample(
+  x = c(0, 1), 
+  prob = c(0, 1), 
+  size = nrows * ncols, 
+  replace = TRUE
+)
+GeneSet1 <- matrix(vals, nrow = nrows, dimnames = list('GeneSet1', GeneSet1)) #row name first, then column names
+ 
+#ex
+##              [,gene1] [,gene2] [,gene3] [,gene4] [,gene5] [,gene6]
+## [GeneSet1,]    1        1        1        1         1        1    
+
+#2
+ncols <- 1894L
+vals <- sample(
+  x = c(0, 1), 
+  prob = c(0, 1), 
+  size = nrows * ncols, 
+  replace = TRUE
+)
+GeneSet2 <- matrix(vals, nrow = nrows, dimnames = list('GeneSet2', GeneSet2)) #row name first, then column names
+
+#3
+ncols <- 2688L
+vals <- sample(
+  x = c(0, 1), 
+  prob = c(0, 1), 
+  size = nrows * ncols, 
+  replace = TRUE
+)
+GeneSet3 <- matrix(vals, nrow = nrows, dimnames = list('GeneSet3', GeneSet3)) #row name first, then column names
+ 
+
+#4
+ncols <- 2339L
+vals <- sample(
+  x = c(0, 1), 
+  prob = c(0, 1), 
+  size = nrows * ncols, 
+  replace = TRUE
+)
+GeneSet4 <- matrix(vals, nrow = nrows, dimnames = list('GeneSet4', GeneSet4)) 
+
+#5
+ncols <- 343L
+vals <- sample(
+  x = c(0, 1), 
+  prob = c(0, 1), 
+  size = nrows * ncols, 
+  replace = TRUE
+)
+GeneSet5 <- matrix(vals, nrow = nrows, dimnames = list('GeneSet5', GeneSet5))
+
+#6
+ncols <- 254L
+vals <- sample(
+  x = c(0, 1), 
+  prob = c(0, 1), 
+  size = nrows * ncols, 
+  replace = TRUE
+)
+GeneSet6 <- matrix(vals, nrow = nrows, dimnames = list('GeneSet6', GeneSet6)) 
+
+#7
+ncols <- 387L
+vals <- sample(
+  x = c(0, 1), 
+  prob = c(0, 1), 
+  size = nrows * ncols, 
+  replace = TRUE
+)
+GeneSet7 <- matrix(vals, nrow = nrows, dimnames = list('GeneSet7', GeneSet7)) 
+
+#8
+ncols <- 576L
+vals <- sample(
+  x = c(0, 1), 
+  prob = c(0, 1), 
+  size = nrows * ncols, 
+  replace = TRUE
+)
+GeneSet8 <- matrix(vals, nrow = nrows, dimnames = list('GeneSet8', GeneSet8)) 
+```
+
+# Fill Matrix 
+```{r}
+geneSet <- rbind.fill.matrix(GeneSet1, GeneSet2)
+geneSet <- rbind.fill.matrix(geneSet, GeneSet3)
+geneSet <- rbind.fill.matrix(geneSet, GeneSet4)
+geneSet <- rbind.fill.matrix(geneSet, GeneSet5)
+geneSet <- rbind.fill.matrix(geneSet, GeneSet6)
+geneSet <- rbind.fill.matrix(geneSet, GeneSet7)
+geneSet <- rbind.fill.matrix(geneSet, GeneSet8)
+
+geneSet[is.na(geneSet)] <- 0
+
+# Convert to sparse format once all are merged
+geneSet <- as(geneSet, "sparseMatrix")
+
+rownames(geneSet) <- c("GeneSet1", "GeneSet2", "GeneSet3", "GeneSet4", "GeneSet5", "GeneSet6","GeneSet7", "GeneSet8")
+```
+
+# Expression Dataset
+```{r}
+load(file = paste(dir, "Data_input/objects/NI04_tumor_seurat_object.RData", sep = ""))
+
+# If using Seurat version 3:
+
+tiss_subset_tumor2_v3 <- UpdateSeuratObject(tiss_subset_tumor2) 
+#rows = genes, columns = subjects
+ObjectUse <-SetCompare
+
+
+combine_geneSets <- c(HUGS, H3122, PC9, H358, DEG_PR_CL, naive, PR, PD)
+combine_geneSets <- unique(combine_geneSets) #5779
+
+combine_geneSets <- str_replace(combine_geneSets, "\\.", "-")
+
+dataUse <- FetchData(ObjectUse, c(combine_geneSets, 'nCount_RNA','nFeature_RNA','analysis','patient_id','sample_name','biopsy_site', 'cell_id')) #Not found: 43525, 43719, NKX2-1.AS1, FRG1B, AGPAT9, LOC100132352, LOC102723859, STAG3L5P-PVRIG2P.PILRB, FAM178A, ANKRD32
+remove <- c("43525", "43719", "NKX2-1.AS1", "FRG1B", "AGPAT9", "LOC100132352", "LOC102723859", "STAG3L5P-PVRIG2P.PILRB", "FAM178A", "ANKRD32") #some are RNA genes or microRNA, or lncRNA or dups.
+combine_geneSets <- combine_geneSets[!combine_geneSets %in% remove]
+combine_geneSets <- c(combine_geneSets, "PIR-43525", "PIR-43719-003","NKX2-1-AS1","FRG1BP", "GPAT3", "TBC1D3E", "STAG3L5P-PVRIG2P-PILRB","SLF2", "SLF1") #5778
+combine_geneSets<- unique(combine_geneSets) #5768 ,,#duplicates removed
+dataUse <- FetchData(ObjectUse, c(combine_geneSets, 'nCount_RNA','nFeature_RNA','analysis','patient_id','sample_name','biopsy_site', 'cell_id')) #not found: LOC80078, PIR-43525, PIR-43719-003
+remove <- c("LOC80078","PIR-43525", "PIR-43719-003") 
+combine_geneSets <- combine_geneSets[!combine_geneSets %in% remove]
+combine_geneSets <- c(combine_geneSets, "PIR-43525", "PIR-43719-003","NKX2-1-AS1","FRG1BP", "GPAT3", "TBC1D3E", "STAG3L5P-PVRIG2P-PILRB","SLF2", "SLF1") #5778
+combine_geneSets<- unique(combine_geneSets) #5768 ,,#duplicates removed
+dataUse <- FetchData(ObjectUse, c(combine_geneSets, 'nCount_RNA','nFeature_RNA','analysis','patient_id','sample_name','biopsy_site', 'cell_id')) 
+
+
+#genes as columns and rows as cell_id
+
+PD_df <- filter(dataUse, analysis == "grouped_pd", biopsy_site == "Lung")
+RD_df <- filter(dataUse, analysis == "grouped_pr", biopsy_site == "Lung")
+TN_df <- filter(dataUse, analysis == "naive", biopsy_site == "Lung")
+
+PD_df <- PD_df[['cell_id']] 
+RD_df <- RD_df[['cell_id']]
+TN_df <- TN_df[['cell_id']]
+
+all_cells_df <- dataUse
+rownames(all_cells_df) <- all_cells_df$cell_id
+# remove all non-number columns
+all_cells_df <- all_cells_df[,-5766]#, 'nCount_RNA','nFeature_RNA','analysis','patient_id','sample_name','biopsy_site', 'cell_id'))
+all_cells_df <- all_cells_df[,-5766] #repeat until all gone
+
+all_cells_df_T <- t(all_cells_df) 
+```
+
+
+## Subject Classes
+```{r}
+#factor of classes for the subjects
+#PD_df <- PD_df[['cell_id']] #129
+#RD_df <- RD_df[['cell_id']] #488
+#TN_df <- TN_df[['cell_id']] #641
+
+SubjectClasses <- matrix(data = NA, nrow = 129, ncol = 1)
+SubjectClasses.2 <- matrix(data = NA, nrow = 488, ncol = 1)
+SubjectClasses.3 <- matrix(data = NA, nrow = 641, ncol = 1)
+ 
+rownames(SubjectClasses) <- PD_df
+rownames(SubjectClasses.2) <- RD_df
+rownames(SubjectClasses.3) <- TN_df
+
+
+SubjectClasses <- as.data.frame(SubjectClasses)
+SubjectClasses.2 <- as.data.frame(SubjectClasses.2)
+SubjectClasses.3 <- as.data.frame(SubjectClasses.3)
+
+SubjectClasses$V1 <- as.factor('nonRD')
+SubjectClasses.2$V1 <- as.factor('RD')
+SubjectClasses.3$V1 <- as.factor('nonRD')
+
+SubjectClasses <- rbind(SubjectClasses, SubjectClasses.2)
+SubjectClasses <- rbind(SubjectClasses, SubjectClasses.3)
+```
+
+# Implementation
+```{r}
+#remove genes with sample variance = 0
+all_cells_df_T <- all_cells_df_T[apply(all_cells_df_T,1,sd) != 0,]
+#make sure it does not say "NAs introduced by coercion"
+#run with default parameters
+GSALightResults <- GSALight(eset = all_cells_df_T, fac = factor(SubjectClasses$V1), gs = geneSet, nperm = 5000, minsize = 10, rmGSGenes = 'gene', method = 'mean')
+
+#Some genes within the gene sets are not contained in the expression data set.
+#These genes are removed from the gene sets since rmGSGenes == 'gene'.
+#After gene set size filtering, there are 8 gene sets, containing a total of 5602 genes for analysis.
+
+#method = mean; the mean of the statistics of the genes inside a gene set
+
+```
+# Results
+```{r}
+head(GSALightResults)
+#Each row represents the results for a gene set. As the column names suggest, the first two columns are the p-values for testing up-regulation in the two different subject classes. The next two columns are the q-values (that control for false discovery rate) for testing up-regulation in the two different subject classes. The fifth column is the gene set statistics, and the final column shows the number of genes within each gene set.
+GSALightResults
+```
+
+```{r}
+#try to restandardize since we would normally expect most values to be insignificant
+GSALightResults2 <- GSALight(eset = all_cells_df_T, fac = factor(SubjectClasses$V1), gs = geneSet, nperm = 5000, minsize = 10, rmGSGenes = 'gene', method = 'mean', restandardize = TRUE)
+GSALightResults2
+hist(GSALightResults[,'p-value:up-regulated in RD'], main=NULL, xlab='p-value')
+hist(GSALightResults2[,'p-value:up-regulated in RD'], main=NULL, xlab='p-value')
+#same
+```
+
+```{r}
+hist(GSALightResults[,'p-value:up-regulated in nonRD'], main=NULL, xlab='p-value')
+#observe that most gene sets have very small p-values. Assuming that most gene sets should be insignificant, the p-values are expected to be more uniformly distributed
+```
+
+
+#Overlap Tests
+```{r}
+BiocManager::install('GeneOverlap')
+library(GeneOverlap)
+gom <- newGOM(gsetA = list(HUGS), gsetB= list(H3122, PC9,H358, DEG_PR_CL, PR, PD, naive) ,genome.size = 26e3) 
+
+getMatrix(gom, name="pval")
+#1.204124e-34 4.662566e-93 4.090615e-17 4.794266e-15 1.844446e-11 3.593076e-02 3.444776e-01
+drawHeatmap(gom)
+
+getMatrix(gom, "odds.ratio")
+#5.991118 12.836057  3.529474  7.972420  7.800051  2.078981  1.216434
+
+HUGS_H3122 <- gom[1, 1]
+
+HUGS_PC9 <- gom[1, 2]
+
+HUGS_H358 <- gom[1, 3]
+
+HUGS_DEG_PR_CL <- gom[1, 4]
+
+HUGS_PR <- gom[1, 5]
+
+
+HUGS_PD <- gom[1, 6]
+
+HUGS_naive <- gom[1, 7]
+
+```
+
+# Graphics
+## Scatterplot
+```{r}
+
+Results <- GSALightResults
+orderplot <- c(5, 7, 6, 3, 4, 8, 2, 1)
+orderplotP <- c(5, 6, 7, 3, 4, 8, 2, 1)
+#(1)  5, (2) 7 , (3) 6 , (4)3 ,(5)4 , (6) 8, (7)2, (8)1
+Results$orderplot <- orderplot
+Results$orderplotP <- orderplotP
+
+Results <- Results[,-8]
+
+
+```
