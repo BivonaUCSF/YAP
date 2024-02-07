@@ -6,4 +6,4 @@ explainer:
 - the *.sh files in rumi are used for preprocessing of the raw fastq data
 - rumi file structure contains the raw data mapping, which is to be transferred via a separate transfer
 
-JY 01/02/2024
+JY 01/02/2024 https://github.com/johnnyUCSF/
